@@ -159,9 +159,11 @@
       { id: 'messages', label: 'Nachrichten', icon: 'campaign' },
     ];
     var admin = role === 'admin' || role === 'coordinator' || role === 'suad';
+    if (role === 'teacher' || admin) items.push({ id: 'subs', label: 'Vertretung', icon: 'swap_horiz' });
     if (admin) {
       items.push({ id: 'users', label: 'Nutzer', icon: 'group' });
       items.push({ id: 'groups', label: 'Gruppen', icon: 'groups' });
+      items.push({ id: 'profiles', label: 'Rechteprofile', icon: 'shield_person' });
       items.push({ id: 'codes', label: 'Codes', icon: 'qr_code_2' });
       items.push({ id: 'stats', label: 'Statistik', icon: 'bar_chart' });
       items.push({ id: 'branding', label: 'Branding', icon: 'palette' });
@@ -238,6 +240,7 @@
       dashboard: viewDashboard, events: viewEvents, chat: viewChat, messages: viewMessages,
       users: viewUsers, groups: viewGroups, codes: viewCodes, stats: viewStats,
       branding: viewBranding, system: viewSystem, suad: viewSuad, profile: viewProfile,
+      subs: viewSubs, profiles: viewProfiles,
     };
     (map[currentView] || viewDashboard)(node);
   }
@@ -284,13 +287,20 @@
         .then(function () { snack(label + ' gespeichert'); navigate('events'); })
         .catch(function (ex) { snack(ex.message, true); });
     }
+    var myId = state.me.id;
     if (ev.mode === 'open') {
-      wrap.appendChild(h('button', { class: 'btn tonal', onclick: function () { act('/attendance', { status: 'registered' }, 'Anmeldung'); } }, [icon('check'), 'Anmelden']));
-      wrap.appendChild(h('button', { class: 'btn outlined', onclick: function () { act('/attendance', { status: 'withdrawn' }, 'Abmeldung'); } }, [icon('close'), 'Abmelden']));
+      wrap.appendChild(h('button', { class: 'btn tonal', onclick: function () { act('/attendance', { action: 'register' }, 'Anmeldung'); } }, [icon('check'), 'Anmelden']));
+      wrap.appendChild(h('button', { class: 'btn outlined', onclick: function () { act('/attendance', { action: 'withdraw' }, 'Abmeldung'); } }, [icon('close'), 'Abmelden']));
     } else if (ev.mode === 'request') {
-      wrap.appendChild(h('button', { class: 'btn tonal', onclick: function () { act('/attendance', { status: 'requested' }, 'Anfrage'); } }, [icon('front_hand'), 'Teilnahme anfragen']));
+      wrap.appendChild(h('button', { class: 'btn tonal', onclick: function () { act('/attendance', { action: 'register' }, 'Anfrage'); } }, [icon('front_hand'), 'Teilnahme anfragen']));
+      wrap.appendChild(h('button', { class: 'btn outlined', onclick: function () { act('/attendance', { action: 'withdraw' }, 'Abmeldung'); } }, [icon('close'), 'Abmelden']));
     } else {
       wrap.appendChild(h('span', { class: 'chip' }, ['Geschlossen']));
+    }
+    // Zusage/Absage im Bestätigungsfenster
+    if (ev.confirmationWindowMinutes != null) {
+      wrap.appendChild(h('button', { class: 'btn text', onclick: function () { act('/attendance/' + myId + '/confirm', {}, 'Zusage'); } }, [icon('event_available'), 'Zusagen']));
+      wrap.appendChild(h('button', { class: 'btn text', onclick: function () { act('/attendance/' + myId + '/decline', {}, 'Absage'); } }, [icon('event_busy'), 'Absagen']));
     }
     return wrap;
   }
@@ -308,39 +318,111 @@
       if (!events || !events.length) { node.appendChild(h('div', { class: 'empty' }, [icon('calendar_month'), h('div', {}, ['Keine Termine.'])])); return; }
       var stack = h('div', { class: 'stack' });
       events.forEach(function (ev) {
+        var headRow = h('div', { class: 'row' }, [
+          h('h3', { style: 'flex:1;margin:0' }, [esc(ev.title)]),
+          ev.seriesId ? h('span', { class: 'chip', title: 'Serientermin' }, ['Serie']) : null,
+          h('span', { class: 'chip' }, [ev.mode]),
+        ]);
         var card = h('div', { class: 'card' }, [
-          h('div', { class: 'row' }, [
-            h('h3', { style: 'flex:1;margin:0' }, [esc(ev.title)]),
-            h('span', { class: 'chip' }, [ev.mode]),
-          ]),
+          headRow,
           h('div', { class: 'muted' }, [fmtDate(ev.startAt) + (ev.location ? ' · ' + esc(ev.location) : '')]),
           ev.description ? h('p', {}, [esc(ev.description)]) : null,
           ev.isCancelled ? h('div', { class: 'error-text' }, ['Ausgefallen: ' + esc(ev.cancelReason || '')]) : attendanceButtons(ev),
         ]);
+        if (canManage) card.appendChild(eventManageRow(ev));
         stack.appendChild(card);
       });
       node.appendChild(stack);
     }).catch(function (ex) { showError(node, ex); });
   }
 
-  function eventDialog() {
-    var title = fieldInput('Titel', 'title');
-    var start = fieldInput('Beginn', 'startAt', 'datetime-local');
-    var end = fieldInput('Ende', 'endAt', 'datetime-local');
-    var loc = fieldInput('Ort (optional)', 'location');
-    var descWrap = h('div', { class: 'field' }, [h('label', {}, ['Beschreibung']), h('textarea', { name: 'description', rows: '2' })]);
-    var modeSel = h('select', { name: 'mode' }, [
-      h('option', { value: 'open' }, ['Offen']),
-      h('option', { value: 'request' }, ['Auf Anfrage']),
-      h('option', { value: 'closed' }, ['Geschlossen']),
+  function askScope(ev, cb) {
+    if (!ev.seriesId) { cb('single'); return; }
+    var sel = h('select', {}, [
+      h('option', { value: 'single' }, ['Nur dieser Termin']),
+      h('option', { value: 'following' }, ['Dieser und folgende']),
+      h('option', { value: 'all' }, ['Alle der Serie']),
     ]);
-    var group = fieldInput('Gruppen-ID', 'groupId');
+    var d = dialog('Serientermin – Umfang', [h('div', { class: 'field' }, [h('label', {}, ['Änderung anwenden auf']), sel])], [
+      h('button', { class: 'btn text', onclick: function () { d.close(); } }, ['Abbrechen']),
+      h('button', { class: 'btn', onclick: function () { d.close(); cb(sel.value); } }, ['Weiter']),
+    ]);
+  }
+
+  function eventManageRow(ev) {
+    var row = h('div', { class: 'row-actions', style: 'margin-top:8px;border-top:1px solid var(--md-outline-variant);padding-top:8px' });
+    row.appendChild(h('button', { class: 'icon-btn', title: 'Bearbeiten', onclick: function () { eventDialog(ev); } }, [icon('edit')]));
+    if (ev.isCancelled) {
+      row.appendChild(h('button', { class: 'icon-btn', title: 'Ausfall aufheben', onclick: function () {
+        askScope(ev, function (scope) {
+          API.del('/events/' + ev.id + '/cancel?scope=' + scope).then(function () { snack('Ausfall aufgehoben'); navigate('events'); }).catch(function (ex) { snack(ex.message, true); });
+        });
+      } }, [icon('event_available')]));
+    } else {
+      row.appendChild(h('button', { class: 'icon-btn', title: 'Absagen (Ausfall)', onclick: function () {
+        var reason = fieldInput('Begründung', 'reason');
+        var d = dialog('Termin absagen', [reason.wrap], [
+          h('button', { class: 'btn text', onclick: function () { d.close(); } }, ['Abbrechen']),
+          h('button', { class: 'btn danger', onclick: function () {
+            var r = reason.input.value.trim();
+            if (!r) { snack('Begründung erforderlich', true); return; }
+            d.close();
+            askScope(ev, function (scope) {
+              API.post('/events/' + ev.id + '/cancel?scope=' + scope, { reason: r }).then(function () { snack('Termin abgesagt'); navigate('events'); }).catch(function (ex) { snack(ex.message, true); });
+            });
+          } }, ['Absagen']),
+        ]);
+      } }, [icon('event_busy')]));
+    }
+    row.appendChild(h('button', { class: 'icon-btn', title: 'Löschen', onclick: function () {
+      askScope(ev, function (scope) {
+        var d = dialog('Termin löschen', [h('p', {}, ['„' + esc(ev.title) + '“ wirklich löschen?'])], [
+          h('button', { class: 'btn text', onclick: function () { d.close(); } }, ['Abbrechen']),
+          h('button', { class: 'btn danger', onclick: function () {
+            API.del('/events/' + ev.id + '?scope=' + scope).then(function () { d.close(); snack('Gelöscht'); navigate('events'); }).catch(function (ex) { snack(ex.message, true); });
+          } }, ['Löschen']),
+        ]);
+      });
+    } }, [icon('delete')]));
+    return row;
+  }
+
+  function toLocalInput(iso) {
+    if (!iso) return '';
+    var dt = new Date(iso);
+    var off = dt.getTimezoneOffset() * 60000;
+    return new Date(dt.getTime() - off).toISOString().slice(0, 16);
+  }
+
+  function eventDialog(ev) {
+    var editing = !!ev;
+    var title = fieldInput('Titel', 'title', 'text', editing ? ev.title : '');
+    var start = fieldInput('Beginn', 'startAt', 'datetime-local', editing ? toLocalInput(ev.startAt) : '');
+    var end = fieldInput('Ende', 'endAt', 'datetime-local', editing ? toLocalInput(ev.endAt) : '');
+    var loc = fieldInput('Ort (optional)', 'location', 'text', editing ? (ev.location || '') : '');
+    var descWrap = h('div', { class: 'field' }, [h('label', {}, ['Beschreibung']), h('textarea', { name: 'description', rows: '2' }, [editing ? (ev.description || '') : ''])]);
+    var modeSel = h('select', { name: 'mode' }, [
+      h('option', { value: 'open', selected: editing && ev.mode === 'open' ? 'selected' : null }, ['Offen']),
+      h('option', { value: 'request', selected: editing && ev.mode === 'request' ? 'selected' : null }, ['Auf Anfrage']),
+      h('option', { value: 'closed', selected: editing && ev.mode === 'closed' ? 'selected' : null }, ['Geschlossen']),
+    ]);
+    var group = fieldInput('Gruppen-ID', 'groupId', 'text', editing ? ev.groupId : '');
+    var signup = fieldInput('Anmeldefrist (optional)', 'signupDeadline', 'datetime-local', editing ? toLocalInput(ev.signupDeadline) : '');
+    var withdraw = fieldInput('Abmeldefrist (optional)', 'withdrawDeadline', 'datetime-local', editing ? toLocalInput(ev.withdrawDeadline) : '');
+    var confWin = fieldInput('Bestätigungsfenster (Min. vor Beginn, optional)', 'confirmationWindowMinutes', 'number', editing && ev.confirmationWindowMinutes != null ? String(ev.confirmationWindowMinutes) : '');
+    // Serie nur beim Anlegen
+    var rruleSel = h('select', { name: 'rrule' }, [
+      h('option', { value: '' }, ['Einzeltermin']),
+      h('option', { value: 'FREQ=DAILY' }, ['Täglich']),
+      h('option', { value: 'FREQ=WEEKLY' }, ['Wöchentlich']),
+      h('option', { value: 'FREQ=MONTHLY' }, ['Monatlich']),
+    ]);
+    var count = fieldInput('Anzahl Termine (Serie)', 'count', 'number', '1');
     var err = h('div', { class: 'error-text' });
     var d;
-    var save = h('button', { class: 'btn' }, [icon('save'), 'Speichern']);
-    save.addEventListener('click', function () {
-      err.textContent = '';
-      API.post('/events', {
+
+    function payload() {
+      return {
         title: title.input.value.trim(),
         startAt: start.input.value ? new Date(start.input.value).toISOString() : undefined,
         endAt: end.input.value ? new Date(end.input.value).toISOString() : undefined,
@@ -348,14 +430,37 @@
         description: descWrap.querySelector('textarea').value.trim() || undefined,
         mode: modeSel.value,
         groupId: group.input.value.trim(),
-      }).then(function () { d.close(); snack('Termin erstellt'); navigate('events'); })
-        .catch(function (ex) { err.textContent = ex.message; });
+        signupDeadline: signup.input.value ? new Date(signup.input.value).toISOString() : undefined,
+        withdrawDeadline: withdraw.input.value ? new Date(withdraw.input.value).toISOString() : undefined,
+        confirmationWindowMinutes: confWin.input.value ? parseInt(confWin.input.value, 10) : undefined,
+      };
+    }
+
+    var save = h('button', { class: 'btn' }, [icon('save'), 'Speichern']);
+    save.addEventListener('click', function () {
+      err.textContent = '';
+      if (editing) {
+        askScope(ev, function (scope) {
+          API.patch('/events/' + ev.id + '?scope=' + scope, payload())
+            .then(function () { d.close(); snack('Termin aktualisiert'); navigate('events'); })
+            .catch(function (ex) { err.textContent = ex.message; });
+        });
+      } else {
+        var body = payload();
+        if (rruleSel.value) { body.rrule = rruleSel.value; body.count = parseInt(count.input.value, 10) || 1; }
+        API.post('/events', body).then(function () { d.close(); snack('Termin erstellt'); navigate('events'); })
+          .catch(function (ex) { err.textContent = ex.message; });
+      }
     });
-    d = dialog('Neuer Termin', [
+    var fields = [
       title.wrap, start.wrap, end.wrap, loc.wrap, descWrap,
       h('div', { class: 'field' }, [h('label', {}, ['Modus']), modeSel]),
-      group.wrap, err,
-    ], [h('button', { class: 'btn text', onclick: function () { d.close(); } }, ['Abbrechen']), save]);
+      group.wrap, signup.wrap, withdraw.wrap, confWin.wrap,
+    ];
+    if (!editing) fields.push(h('div', { class: 'field' }, [h('label', {}, ['Wiederholung']), rruleSel]), count.wrap);
+    fields.push(err);
+    d = dialog(editing ? 'Termin bearbeiten' : 'Neuer Termin', fields,
+      [h('button', { class: 'btn text', onclick: function () { d.close(); } }, ['Abbrechen']), save]);
   }
 
   // ---------------------------------------------------------------------------
@@ -363,11 +468,12 @@
   // ---------------------------------------------------------------------------
   function viewChat(node) {
     clear(node);
-    node.appendChild(sectionHead('Chat'));
+    var actions = [h('button', { class: 'btn', onclick: chatDialog }, [icon('add'), 'Chat'])];
+    node.appendChild(sectionHead('Chat', actions));
     loading(node);
     API.get('/chat/rooms').then(function (rooms) {
       clear(node);
-      node.appendChild(sectionHead('Chat'));
+      node.appendChild(sectionHead('Chat', actions));
       if (!rooms || !rooms.length) { node.appendChild(h('div', { class: 'empty' }, [icon('chat'), h('div', {}, ['Keine Chats.'])])); return; }
       var stack = h('div', { class: 'stack' });
       rooms.forEach(function (r) {
@@ -381,7 +487,33 @@
     }).catch(function (ex) { showError(node, ex); });
   }
 
+  function chatDialog() {
+    var typeSel = h('select', {}, [h('option', { value: 'direct' }, ['Einzelchat']), h('option', { value: 'group' }, ['Gruppenchat'])]);
+    var name = fieldInput('Chat-Name (nur Gruppe)', 'name');
+    var partsWrap = h('div', { class: 'stack', style: 'max-height:35vh;overflow-y:auto' });
+    var boxes = {};
+    var err = h('div', { class: 'error-text' });
+    var d;
+    API.get('/users').then(function (users) {
+      (users || []).filter(function (u) { return u.id !== state.me.id; }).forEach(function (u) {
+        var cb = h('input', { type: 'checkbox' });
+        boxes[u.id] = cb;
+        partsWrap.appendChild(h('label', { class: 'row', style: 'gap:8px' }, [cb, esc(u.name) + ' (' + u.role + ')']));
+      });
+    }).catch(function () { partsWrap.appendChild(h('div', { class: 'muted' }, ['Nutzerliste nicht verfügbar.'])); });
+    var save = h('button', { class: 'btn' }, [icon('save'), 'Erstellen']);
+    save.addEventListener('click', function () {
+      var ids = Object.keys(boxes).filter(function (k) { return boxes[k].checked; });
+      API.post('/chat/rooms', { type: typeSel.value, name: name.input.value.trim() || undefined, participantIds: ids })
+        .then(function () { d.close(); snack('Chat erstellt'); navigate('chat'); })
+        .catch(function (ex) { err.textContent = ex.message; });
+    });
+    d = dialog('Neuer Chat', [h('div', { class: 'field' }, [h('label', {}, ['Typ']), typeSel]), name.wrap, partsWrap, err],
+      [h('button', { class: 'btn text', onclick: function () { d.close(); } }, ['Abbrechen']), save]);
+  }
+
   function openRoom(room) {
+    var canMod = ['admin', 'coordinator', 'suad'].indexOf(state.me.role) >= 0;
     var list = h('div', { class: 'stack', style: 'max-height:50vh;overflow-y:auto' });
     var input = h('input', { placeholder: 'Nachricht…', style: 'flex:1' });
     var d = dialog(room.name || 'Chat', [list, h('div', { class: 'row' }, [input,
@@ -392,8 +524,14 @@
       API.get('/chat/rooms/' + room.id + '/messages').then(function (msgs) {
         clear(list);
         (msgs || []).forEach(function (m) {
-          list.appendChild(h('div', {}, [h('span', { class: 'muted' }, [esc(m.senderName) + ': ']),
-            m.deleted ? h('em', { class: 'muted' }, ['(gelöscht)']) : esc(m.body)]));
+          var line = h('div', { class: 'row' }, [h('div', { style: 'flex:1' }, [h('span', { class: 'muted' }, [esc(m.senderName) + ': ']),
+            m.deleted ? h('em', { class: 'muted' }, ['(gelöscht)']) : esc(m.body)])]);
+          if (canMod && !m.deleted) {
+            line.appendChild(h('button', { class: 'icon-btn', title: 'Moderieren', onclick: function () {
+              API.del('/chat/messages/' + m.id).then(function () { snack('Gelöscht'); load(); }).catch(function (ex) { snack(ex.message, true); });
+            } }, [icon('delete')]));
+          }
+          list.appendChild(line);
         });
         list.scrollTop = list.scrollHeight;
       });
@@ -418,39 +556,73 @@
   function viewMessages(node) {
     clear(node);
     var canManage = ['admin', 'coordinator', 'suad'].indexOf(state.me.role) >= 0;
-    var actions = canManage ? [h('button', { class: 'btn', onclick: messageDialog }, [icon('add'), 'Nachricht'])] : [];
+    var manageMode = false;
+    var actions = [];
+    if (canManage) {
+      var toggle = h('button', { class: 'btn text', onclick: function () { manageMode = !manageMode; load(); } }, [icon('manage_accounts'), 'Verwalten']);
+      actions.push(toggle);
+      actions.push(h('button', { class: 'btn', onclick: function () { messageDialog(null); } }, [icon('add'), 'Nachricht']));
+    }
     node.appendChild(sectionHead('Systemnachrichten', actions));
-    loading(node);
-    API.get('/messages').then(function (msgs) {
-      clear(node);
-      node.appendChild(sectionHead('Systemnachrichten', actions));
-      if (!msgs || !msgs.length) { node.appendChild(h('div', { class: 'empty' }, [icon('campaign'), h('div', {}, ['Keine Nachrichten.'])])); return; }
-      var stack = h('div', { class: 'stack' });
-      msgs.forEach(function (m) {
-        stack.appendChild(h('div', { class: 'card' }, [
-          h('h3', {}, [esc(m.title)]),
-          h('p', {}, [esc(m.body)]),
-          h('div', { class: 'row' }, [
-            h('button', { class: 'btn text', onclick: function () { API.post('/messages/' + m.id + '/dismiss', {}).then(function () { snack('Ausgeblendet'); navigate('messages'); }); } }, [icon('visibility_off'), 'Ausblenden']),
-          ]),
-        ]));
-      });
-      node.appendChild(stack);
-    }).catch(function (ex) { showError(node, ex); });
+
+    function load() {
+      loading(node);
+      var url = manageMode ? '/messages/manage' : '/messages';
+      API.get(url).then(function (msgs) {
+        clear(node);
+        node.appendChild(sectionHead('Systemnachrichten', actions));
+        if (!msgs || !msgs.length) { node.appendChild(h('div', { class: 'empty' }, [icon('campaign'), h('div', {}, ['Keine Nachrichten.'])])); return; }
+        var stack = h('div', { class: 'stack' });
+        msgs.forEach(function (m) {
+          var footer;
+          if (manageMode) {
+            var validity = [];
+            if (m.validFrom) validity.push('ab ' + fmtDate(m.validFrom));
+            if (m.validUntil) validity.push('bis ' + fmtDate(m.validUntil));
+            footer = h('div', {}, [
+              h('div', { class: 'muted' }, [(m.isActive ? 'aktiv' : 'inaktiv') + (validity.length ? ' · ' + validity.join(' ') : '') + ' · ' + (m.targetRoles || []).join(',')]),
+              h('div', { class: 'row-actions' }, [
+                h('button', { class: 'icon-btn', title: 'Bearbeiten', onclick: function () { messageDialog(m); } }, [icon('edit')]),
+                h('button', { class: 'icon-btn', title: 'Löschen', onclick: function () {
+                  API.del('/messages/' + m.id).then(function () { snack('Gelöscht'); load(); }).catch(function (ex) { snack(ex.message, true); });
+                } }, [icon('delete')]),
+              ]),
+            ]);
+          } else {
+            footer = h('div', { class: 'row' }, [
+              h('button', { class: 'btn text', onclick: function () { API.post('/messages/' + m.id + '/dismiss', {}).then(function () { snack('Ausgeblendet'); load(); }); } }, [icon('visibility_off'), 'Ausblenden']),
+            ]);
+          }
+          stack.appendChild(h('div', { class: 'card' }, [h('h3', {}, [esc(m.title)]), h('p', {}, [esc(m.body)]), footer]));
+        });
+        node.appendChild(stack);
+      }).catch(function (ex) { showError(node, ex); });
+    }
+    load();
   }
 
-  function messageDialog() {
-    var title = fieldInput('Titel', 'title');
-    var bodyWrap = h('div', { class: 'field' }, [h('label', {}, ['Text']), h('textarea', { rows: '3' })]);
+  function messageDialog(m) {
+    var editing = !!m;
+    var title = fieldInput('Titel', 'title', 'text', editing ? m.title : '');
+    var bodyWrap = h('div', { class: 'field' }, [h('label', {}, ['Text']), h('textarea', { rows: '3' }, [editing ? m.body : ''])]);
+    var rolesInput = fieldInput('Zielrollen (Komma, „all")', 'roles', 'text', editing ? (m.targetRoles || ['all']).join(',') : 'all');
+    var vFrom = fieldInput('Gültig ab (optional)', 'validFrom', 'datetime-local', editing ? toLocalInput(m.validFrom) : '');
+    var vUntil = fieldInput('Gültig bis (optional)', 'validUntil', 'datetime-local', editing ? toLocalInput(m.validUntil) : '');
     var err = h('div', { class: 'error-text' });
     var d;
-    var save = h('button', { class: 'btn' }, [icon('save'), 'Senden']);
+    var save = h('button', { class: 'btn' }, [icon('save'), editing ? 'Speichern' : 'Senden']);
     save.addEventListener('click', function () {
-      API.post('/messages', { title: title.input.value.trim(), body: bodyWrap.querySelector('textarea').value.trim() })
-        .then(function () { d.close(); snack('Nachricht erstellt'); navigate('messages'); })
-        .catch(function (ex) { err.textContent = ex.message; });
+      var body = {
+        title: title.input.value.trim(),
+        body: bodyWrap.querySelector('textarea').value.trim(),
+        targetRoles: rolesInput.input.value.split(',').map(function (s) { return s.trim(); }).filter(Boolean),
+        validFrom: vFrom.input.value ? new Date(vFrom.input.value).toISOString() : null,
+        validUntil: vUntil.input.value ? new Date(vUntil.input.value).toISOString() : null,
+      };
+      var p = editing ? API.patch('/messages/' + m.id, body) : API.post('/messages', body);
+      p.then(function () { d.close(); snack('Gespeichert'); navigate('messages'); }).catch(function (ex) { err.textContent = ex.message; });
     });
-    d = dialog('Neue Systemnachricht', [title.wrap, bodyWrap, err],
+    d = dialog(editing ? 'Nachricht bearbeiten' : 'Neue Systemnachricht', [title.wrap, bodyWrap, rolesInput.wrap, vFrom.wrap, vUntil.wrap, err],
       [h('button', { class: 'btn text', onclick: function () { d.close(); } }, ['Abbrechen']), save]);
   }
 
@@ -459,32 +631,134 @@
   // ---------------------------------------------------------------------------
   function viewUsers(node) {
     clear(node);
-    node.appendChild(sectionHead('Nutzerverwaltung'));
+    var actions = [h('button', { class: 'btn', onclick: function () { userDialog(null); } }, [icon('person_add'), 'Nutzer'])];
+    node.appendChild(sectionHead('Nutzerverwaltung', actions));
     loading(node);
     API.get('/users').then(function (users) {
       clear(node);
-      node.appendChild(sectionHead('Nutzerverwaltung'));
+      node.appendChild(sectionHead('Nutzerverwaltung', actions));
+      var filter = h('input', { placeholder: 'Suchen (Name/E-Mail/Rolle)…', style: 'width:100%;margin-bottom:12px' });
+      node.appendChild(filter);
       var table = h('table', {}, [h('thead', {}, [h('tr', {}, [
-        h('th', {}, ['Name']), h('th', {}, ['Rolle']), h('th', {}, ['Status']),
+        h('th', {}, ['Name']), h('th', {}, ['E-Mail']), h('th', {}, ['Rolle']), h('th', {}, ['Status']),
         h('th', {}, ['Letzte Aktivität']), h('th', {}, ['']),
       ])])]);
       var tbody = h('tbody');
-      (users || []).forEach(function (u) {
-        tbody.appendChild(h('tr', {}, [
-          h('td', {}, [esc(u.name)]),
-          h('td', {}, [h('span', { class: 'chip' }, [u.role])]),
-          h('td', {}, [u.isActive ? 'aktiv' : 'gesperrt']),
-          h('td', { class: 'muted' }, [fmtDate(u.lastActiveAt)]),
-          h('td', {}, [h('div', { class: 'row-actions' }, [
-            h('button', { class: 'icon-btn', title: u.isActive ? 'Sperren' : 'Entsperren', onclick: function () { toggleUser(u); } }, [icon(u.isActive ? 'lock' : 'lock_open')]),
-            h('button', { class: 'icon-btn', title: 'Löschen', onclick: function () { deleteUser(u); } }, [icon('delete')]),
-          ])]),
-        ]));
+      function render(list) {
+        clear(tbody);
+        list.forEach(function (u) {
+          tbody.appendChild(h('tr', {}, [
+            h('td', {}, [h('a', { href: 'javascript:void 0', onclick: function () { userDialog(u); } }, [esc(u.name)])]),
+            h('td', { class: 'muted' }, [esc(u.email || '—')]),
+            h('td', {}, [h('span', { class: 'chip' }, [u.role])]),
+            h('td', {}, [u.isActive ? 'aktiv' : 'gesperrt']),
+            h('td', { class: 'muted' }, [fmtDate(u.lastActiveAt)]),
+            h('td', {}, [h('div', { class: 'row-actions' }, [
+              h('button', { class: 'icon-btn', title: 'Rechte', onclick: function () { userPermsDialog(u); } }, [icon('shield')]),
+              h('button', { class: 'icon-btn', title: 'Eltern-Kind', onclick: function () { parentChildDialog(u); } }, [icon('family_restroom')]),
+              h('button', { class: 'icon-btn', title: u.isActive ? 'Sperren' : 'Entsperren', onclick: function () { toggleUser(u); } }, [icon(u.isActive ? 'lock' : 'lock_open')]),
+              h('button', { class: 'icon-btn', title: 'Löschen', onclick: function () { deleteUser(u); } }, [icon('delete')]),
+            ])]),
+          ]));
+        });
+      }
+      render(users || []);
+      filter.addEventListener('input', function () {
+        var q = filter.value.trim().toLowerCase();
+        render((users || []).filter(function (u) {
+          return !q || (u.name + ' ' + (u.email || '') + ' ' + u.role).toLowerCase().indexOf(q) >= 0;
+        }));
       });
       table.appendChild(tbody);
       node.appendChild(h('div', { class: 'card' }, [table]));
     }).catch(function (ex) { showError(node, ex); });
   }
+
+  function userDialog(u) {
+    var editing = !!u;
+    var name = fieldInput('Name', 'name', 'text', editing ? u.name : '');
+    var email = fieldInput('E-Mail (optional)', 'email', 'email', editing ? (u.email || '') : '');
+    var roles = ['member', 'parent', 'teacher', 'coordinator', 'admin'];
+    var roleSel = h('select', {}, roles.map(function (r) { return h('option', { value: r, selected: editing && u.role === r ? 'selected' : null }, [r]); }));
+    var pw = fieldInput(editing ? 'Neues Passwort (optional)' : 'Passwort (min. 8)', 'password', 'password');
+    var err = h('div', { class: 'error-text' });
+    var d;
+    var save = h('button', { class: 'btn' }, [icon('save'), 'Speichern']);
+    save.addEventListener('click', function () {
+      err.textContent = '';
+      var body = { name: name.input.value.trim(), email: email.input.value.trim() || null, role: roleSel.value };
+      if (pw.input.value) body.password = pw.input.value;
+      var p = editing ? API.patch('/users/' + u.id, body) : API.post('/users', body);
+      p.then(function () { d.close(); snack('Gespeichert'); navigate('users'); }).catch(function (ex) { err.textContent = ex.message; });
+    });
+    var fields = [name.wrap, email.wrap, h('div', { class: 'field' }, [h('label', {}, ['Rolle']), roleSel]), pw.wrap, err];
+    d = dialog(editing ? 'Nutzer bearbeiten' : 'Neuer Nutzer', fields,
+      [h('button', { class: 'btn text', onclick: function () { d.close(); } }, ['Abbrechen']), save]);
+  }
+
+  function userPermsDialog(u) {
+    var err = h('div', { class: 'error-text' });
+    var checks = h('div', { class: 'stack', style: 'max-height:40vh;overflow-y:auto' });
+    var boxes = {};
+    var d;
+    Promise.all([API.get('/permission-profiles/catalog'), API.get('/users/' + u.id + '/permission-overrides')]).then(function (r) {
+      var cat = r[0] || [];
+      var existing = {};
+      (r[1] || []).forEach(function (o) { if (o.permissionKey) existing[o.permissionKey] = o.value; });
+      cat.forEach(function (c) {
+        var cb = h('input', { type: 'checkbox' });
+        if (existing[c.key]) cb.checked = true;
+        boxes[c.key] = cb;
+        checks.appendChild(h('label', { class: 'row', style: 'gap:8px;align-items:flex-start' }, [cb, h('div', {}, [h('div', {}, [c.key]), h('div', { class: 'muted' }, [esc(c.description)])])]));
+      });
+    }).catch(function (ex) { err.textContent = ex.message; });
+    var save = h('button', { class: 'btn' }, [icon('save'), 'Speichern']);
+    save.addEventListener('click', function () {
+      var items = Object.keys(boxes).filter(function (k) { return boxes[k].checked; }).map(function (k) { return { permissionKey: k, value: true }; });
+      API.put('/users/' + u.id + '/permissions', { items: items })
+        .then(function () { d.close(); snack('Rechte gespeichert'); }).catch(function (ex) { err.textContent = ex.message; });
+    });
+    d = dialog('Direkte Rechte – ' + esc(u.name), [h('p', { class: 'muted' }, ['Personen-Overrides haben Vorrang vor Gruppen und Rolle.']), checks, err],
+      [h('button', { class: 'btn text', onclick: function () { d.close(); } }, ['Abbrechen']), save]);
+  }
+  function parentChildDialog(u) {
+    var err = h('div', { class: 'error-text' });
+    var childrenBox = h('div', { class: 'stack' });
+    var parentsBox = h('div', { class: 'stack' });
+    var d;
+    function reload() {
+      API.get('/users/' + u.id).then(function (full) {
+        clear(childrenBox); clear(parentsBox);
+        (full.children || []).forEach(function (c) {
+          childrenBox.appendChild(h('div', { class: 'row' }, [h('div', { style: 'flex:1' }, [esc(c.name)]),
+            h('button', { class: 'icon-btn', title: 'Entfernen', onclick: function () {
+              API.del('/users/' + u.id + '/parent-links/' + c.id).then(reload).catch(function (ex) { snack(ex.message, true); });
+            } }, [icon('link_off')])]));
+        });
+        if (!(full.children || []).length) childrenBox.appendChild(h('div', { class: 'muted' }, ['Keine Kinder verknüpft.']));
+        (full.parents || []).forEach(function (p) {
+          parentsBox.appendChild(h('div', { class: 'row' }, [h('div', { style: 'flex:1' }, [esc(p.name)]),
+            h('button', { class: 'icon-btn', title: 'Entfernen', onclick: function () {
+              API.del('/users/' + p.id + '/parent-links/' + u.id).then(reload).catch(function (ex) { snack(ex.message, true); });
+            } }, [icon('link_off')])]));
+        });
+        if (!(full.parents || []).length) parentsBox.appendChild(h('div', { class: 'muted' }, ['Keine Eltern verknüpft.']));
+      }).catch(function (ex) { err.textContent = ex.message; });
+    }
+    var childId = fieldInput('Kind-User-ID hinzufügen', 'childId');
+    var addChild = h('button', { class: 'btn tonal', onclick: function () {
+      // Backend: POST /users/:id/parent-links mit :id = Kind, body.parentId = Elternteil.
+      API.post('/users/' + childId.input.value.trim() + '/parent-links', { parentId: u.id })
+        .then(function () { childId.input.value = ''; reload(); }).catch(function (ex) { snack(ex.message, true); });
+    } }, [icon('add'), 'Als Elternteil verknüpfen']);
+    reload();
+    d = dialog('Eltern-Kind – ' + esc(u.name), [
+      h('h3', {}, ['Kinder von ' + esc(u.name)]), childrenBox,
+      h('div', { class: 'row' }, [childId.wrap]), h('div', { class: 'row' }, [addChild]),
+      h('h3', {}, ['Eltern von ' + esc(u.name)]), parentsBox, err,
+    ], [h('button', { class: 'btn text', onclick: function () { d.close(); } }, ['Schließen'])]);
+  }
+
   function toggleUser(u) {
     API.patch('/users/' + u.id, { isActive: !u.isActive })
       .then(function () { snack('Aktualisiert'); navigate('users'); })
@@ -584,19 +858,31 @@
   // ---------------------------------------------------------------------------
   // Statistik
   // ---------------------------------------------------------------------------
+  var STAT_LABELS = { userCount: 'Nutzer', groupCount: 'Gruppen', eventCount: 'Termine', upcomingEvents: 'Anstehend' };
   function viewStats(node) {
     clear(node);
-    var actions = [h('button', { class: 'btn tonal', onclick: function () { window.location.href = '/api/reports/export'; } }, [icon('download'), 'CSV-Export'])];
+    var actions = [
+      h('button', { class: 'btn tonal', onclick: function () { window.location.href = '/api/reports/export?format=csv'; } }, [icon('download'), 'CSV']),
+      h('button', { class: 'btn tonal', onclick: function () { window.location.href = '/api/reports/export?format=json'; } }, [icon('data_object'), 'JSON']),
+    ];
     node.appendChild(sectionHead('Statistik & Reports', actions));
     loading(node);
-    API.get('/statistics/overview').then(function (s) {
+    Promise.all([API.get('/statistics/overview'), API.get('/statistics/attendance')]).then(function (r) {
+      var s = r[0] || {}, att = r[1] || {};
       clear(node);
       node.appendChild(sectionHead('Statistik & Reports', actions));
       var grid = h('div', { class: 'grid' });
-      Object.keys(s || {}).forEach(function (k) {
-        grid.appendChild(h('div', { class: 'card' }, [h('h3', {}, [String(s[k])]), h('div', { class: 'muted' }, [k])]));
+      Object.keys(s).forEach(function (k) {
+        grid.appendChild(h('div', { class: 'card' }, [h('h3', {}, [String(s[k])]), h('div', { class: 'muted' }, [STAT_LABELS[k] || k])]));
       });
       node.appendChild(grid);
+      var byStatus = att.byStatus || {};
+      var attCard = h('div', { class: 'card' }, [h('h3', {}, ['Anwesenheit (' + (att.total || 0) + ' Einträge)'])]);
+      Object.keys(byStatus).forEach(function (k) {
+        attCard.appendChild(h('div', { class: 'muted' }, [k + ': ' + byStatus[k]]));
+      });
+      if (!Object.keys(byStatus).length) attCard.appendChild(h('div', { class: 'muted' }, ['Keine Daten.']));
+      node.appendChild(attCard);
     }).catch(function (ex) { showError(node, ex); });
   }
 
@@ -616,6 +902,32 @@
       var modeSel = h('select', { name: 'themeMode' }, ['system', 'light', 'dark'].map(function (m) {
         return h('option', { value: m, selected: b.themeMode === m ? 'selected' : null }, [m]);
       }));
+      // Live-Vorschau
+      var preview = h('div', { class: 'card', style: 'max-width:480px' }, []);
+      function renderPreview() {
+        clear(preview);
+        preview.appendChild(h('h3', {}, ['Vorschau']));
+        var bar = h('div', { class: 'row', style: 'padding:10px;border-radius:12px;color:#fff;background:' + (color.input.value.trim() || '#6750A4') }, [
+          b.logoUrl ? h('img', { src: b.logoUrl, alt: '', style: 'height:24px' }) : icon('event_available'),
+          h('strong', {}, [appName.input.value.trim() || 'Anwesenheit NEO']),
+        ]);
+        preview.appendChild(bar);
+      }
+      appName.input.addEventListener('input', renderPreview);
+      color.input.addEventListener('input', renderPreview);
+
+      function uploadField(label, endpoint, key) {
+        var file = h('input', { type: 'file', accept: 'image/*' });
+        var up = h('button', { class: 'btn tonal', onclick: function () {
+          if (!file.files || !file.files[0]) { snack('Datei wählen', true); return; }
+          var fd = new FormData();
+          fd.append('file', file.files[0]);
+          API.post('/branding/' + endpoint, fd).then(function (r) { b[key] = r[key]; applyBranding(b); snack(label + ' hochgeladen'); renderPreview(); })
+            .catch(function (ex) { snack(ex.message, true); });
+        } }, [icon('upload'), label]);
+        return h('div', { class: 'field' }, [h('label', {}, [label]), h('div', { class: 'row' }, [file, up])]);
+      }
+
       var save = h('button', { class: 'btn', onclick: function () {
         API.put('/branding', {
           appName: appName.input.value.trim(), primaryColor: color.input.value.trim(),
@@ -626,8 +938,12 @@
       node.appendChild(h('div', { class: 'card', style: 'max-width:480px' }, [
         appName.wrap, color.wrap, support.wrap,
         h('div', { class: 'field' }, [h('label', {}, ['Theme-Modus']), modeSel]),
+        uploadField('Logo', 'logo', 'logoUrl'),
+        uploadField('Favicon', 'favicon', 'faviconUrl'),
         h('div', { class: 'row' }, [save]),
       ]));
+      renderPreview();
+      node.appendChild(preview);
     }).catch(function (ex) { showError(node, ex); });
   }
 
@@ -739,6 +1055,115 @@
       h('p', { class: 'muted' }, ['Code zur Badge-Freischaltung eingeben.']),
       code.wrap, pw.wrap, err, h('div', { class: 'row' }, [btn]),
     ]));
+  }
+
+  // ---------------------------------------------------------------------------
+  // Vertretungen
+  // ---------------------------------------------------------------------------
+  function viewSubs(node) {
+    clear(node);
+    var actions = [h('button', { class: 'btn', onclick: subDialog }, [icon('add'), 'Anfrage'])];
+    node.appendChild(sectionHead('Vertretungen', actions));
+    loading(node);
+    API.get('/substitutions').then(function (subs) {
+      clear(node);
+      node.appendChild(sectionHead('Vertretungen', actions));
+      if (!subs || !subs.length) { node.appendChild(h('div', { class: 'empty' }, [icon('swap_horiz'), h('div', {}, ['Keine Vertretungen.'])])); return; }
+      var stack = h('div', { class: 'stack' });
+      subs.forEach(function (s) {
+        var row = h('div', { class: 'row-actions', style: 'margin-top:8px' });
+        if (s.status === 'pending') {
+          row.appendChild(h('button', { class: 'btn tonal', onclick: function () { patchSub(s.id, 'confirmed'); } }, [icon('check'), 'Übernehmen']));
+          row.appendChild(h('button', { class: 'btn outlined', onclick: function () { patchSub(s.id, 'rejected'); } }, [icon('close'), 'Ablehnen']));
+        }
+        stack.appendChild(h('div', { class: 'card' }, [
+          h('div', { class: 'row' }, [
+            h('h3', { style: 'flex:1;margin:0' }, [esc(s.event ? s.event.title : '—')]),
+            h('span', { class: 'chip' }, [s.status]),
+          ]),
+          h('div', { class: 'muted' }, [(s.event ? fmtDate(s.event.startAt) : '') + ' · Anfrage: ' + esc(s.requester ? s.requester.name : '') + (s.filler ? ' · Vertretung: ' + esc(s.filler.name) : '')]),
+          s.note ? h('p', {}, [esc(s.note)]) : null,
+          row,
+        ]));
+      });
+      node.appendChild(stack);
+    }).catch(function (ex) { showError(node, ex); });
+  }
+  function patchSub(id, status) {
+    API.patch('/substitutions/' + id, { status: status })
+      .then(function () { snack('Aktualisiert'); navigate('subs'); })
+      .catch(function (ex) { snack(ex.message, true); });
+  }
+  function subDialog() {
+    var evId = fieldInput('Termin-ID', 'eventId');
+    var noteWrap = h('div', { class: 'field' }, [h('label', {}, ['Notiz (optional)']), h('textarea', { rows: '2' })]);
+    var err = h('div', { class: 'error-text' });
+    var d;
+    var save = h('button', { class: 'btn' }, [icon('save'), 'Anfragen']);
+    save.addEventListener('click', function () {
+      API.post('/substitutions', { eventId: evId.input.value.trim(), note: noteWrap.querySelector('textarea').value.trim() || undefined })
+        .then(function () { d.close(); snack('Vertretung angefragt'); navigate('subs'); })
+        .catch(function (ex) { err.textContent = ex.message; });
+    });
+    d = dialog('Vertretung anfragen', [evId.wrap, noteWrap, err],
+      [h('button', { class: 'btn text', onclick: function () { d.close(); } }, ['Abbrechen']), save]);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Rechteprofile
+  // ---------------------------------------------------------------------------
+  function viewProfiles(node) {
+    clear(node);
+    var actions = [h('button', { class: 'btn', onclick: function () { profileDialog(null); } }, [icon('add'), 'Profil'])];
+    node.appendChild(sectionHead('Rechteprofile', actions));
+    loading(node);
+    API.get('/permission-profiles').then(function (profiles) {
+      clear(node);
+      node.appendChild(sectionHead('Rechteprofile', actions));
+      if (!profiles || !profiles.length) { node.appendChild(h('div', { class: 'empty' }, [icon('shield_person'), h('div', {}, ['Keine Profile.'])])); return; }
+      var grid = h('div', { class: 'grid' });
+      profiles.forEach(function (p) {
+        var cnt = p._count || {};
+        grid.appendChild(h('div', { class: 'card' }, [
+          h('div', { class: 'row' }, [icon('shield_person'), h('h3', { style: 'flex:1;margin:0' }, [esc(p.name)])]),
+          h('p', { class: 'muted' }, [(p.items ? p.items.length : 0) + ' Rechte · ' + ((cnt.userPermissions || 0) + (cnt.groupPermissions || 0)) + ' Zuweisungen']),
+          h('div', { class: 'row-actions' }, [
+            h('button', { class: 'icon-btn', title: 'Bearbeiten', onclick: function () { profileDialog(p); } }, [icon('edit')]),
+            h('button', { class: 'icon-btn', title: 'Löschen', onclick: function () {
+              API.del('/permission-profiles/' + p.id).then(function () { snack('Gelöscht'); navigate('profiles'); }).catch(function (ex) { snack(ex.message, true); });
+            } }, [icon('delete')]),
+          ]),
+        ]));
+      });
+      node.appendChild(grid);
+    }).catch(function (ex) { showError(node, ex); });
+  }
+  function profileDialog(profile) {
+    var editing = !!profile;
+    var name = fieldInput('Name', 'name', 'text', editing ? profile.name : '');
+    var err = h('div', { class: 'error-text' });
+    var checks = h('div', { class: 'stack', style: 'max-height:40vh;overflow-y:auto' });
+    var boxes = {};
+    var d;
+    API.get('/permission-profiles/catalog').then(function (cat) {
+      var existing = {};
+      (editing && profile.items ? profile.items : []).forEach(function (it) { existing[it.permissionKey] = it.value; });
+      (cat || []).forEach(function (c) {
+        var cb = h('input', { type: 'checkbox' });
+        if (existing[c.key]) cb.checked = true;
+        boxes[c.key] = cb;
+        checks.appendChild(h('label', { class: 'row', style: 'gap:8px;align-items:flex-start' }, [cb, h('div', {}, [h('div', {}, [c.key]), h('div', { class: 'muted' }, [esc(c.description)])])]));
+      });
+    });
+    var save = h('button', { class: 'btn' }, [icon('save'), 'Speichern']);
+    save.addEventListener('click', function () {
+      var items = Object.keys(boxes).filter(function (k) { return boxes[k].checked; }).map(function (k) { return { permissionKey: k, value: true }; });
+      var body = { name: name.input.value.trim(), items: items };
+      var p = editing ? API.patch('/permission-profiles/' + profile.id, body) : API.post('/permission-profiles', body);
+      p.then(function () { d.close(); snack('Gespeichert'); navigate('profiles'); }).catch(function (ex) { err.textContent = ex.message; });
+    });
+    d = dialog(editing ? 'Profil bearbeiten' : 'Neues Rechteprofil', [name.wrap, checks, err],
+      [h('button', { class: 'btn text', onclick: function () { d.close(); } }, ['Abbrechen']), save]);
   }
 
   // ---------------------------------------------------------------------------
