@@ -4,6 +4,7 @@ data/
 backups/
 uploads/
 *.log
+logs/
 .env
 .env.local
 prisma/*.db
