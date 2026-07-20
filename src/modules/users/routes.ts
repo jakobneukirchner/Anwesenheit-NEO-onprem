@@ -176,6 +176,53 @@ router.get(
   }),
 );
 
+// GET /users/:id/permission-overrides – direkte Rechte/Profile (roh, nicht aufgelöst)
+router.get(
+  '/:id/permission-overrides',
+  requirePermission('canManagePermissionProfiles'),
+  asyncHandler(async (req, res) => {
+    const perms = await prisma.userPermission.findMany({
+      where: { userId: req.params.id },
+      include: { profile: true },
+    });
+    res.json(perms);
+  }),
+);
+
+// PUT /users/:id/permissions – ersetzt Personen-Overrides (Rechte/Profile)
+router.put(
+  '/:id/permissions',
+  requirePermission('canManagePermissionProfiles'),
+  asyncHandler(async (req, res) => {
+    const userId = req.params.id;
+    const target = await prisma.user.findUnique({ where: { id: userId } });
+    if (!target) throw new HttpError(404, 'Nicht gefunden');
+    const { ALL_PERMISSION_KEYS } = await import('../../utils/permissionCatalog');
+    const items: { permissionKey?: string; profileId?: string; value?: boolean }[] = req.body.items ?? [];
+    for (const it of items) {
+      if (it.permissionKey === 'canViewChildEmail') {
+        throw new HttpError(400, 'canViewChildEmail nicht vergebbar');
+      }
+      if (it.permissionKey && !ALL_PERMISSION_KEYS.includes(it.permissionKey)) {
+        throw new HttpError(400, `Unbekanntes Recht: ${it.permissionKey}`);
+      }
+    }
+    await prisma.$transaction([
+      prisma.userPermission.deleteMany({ where: { userId } }),
+      prisma.userPermission.createMany({
+        data: items.map((it) => ({
+          userId,
+          permissionKey: it.permissionKey ?? null,
+          profileId: it.profileId ?? null,
+          value: it.value ?? true,
+        })),
+      }),
+    ]);
+    await auditLog('UPDATE_USER_PERMISSIONS', req.user!.id, userId, 'user', { count: items.length });
+    res.json({ ok: true });
+  }),
+);
+
 // POST /users/:id/parent-links – Eltern-Kind-Verknüpfung (:id = Kind)
 router.post(
   '/:id/parent-links',

@@ -101,6 +101,17 @@ router.post(
   '/:id/attendance/:userId/confirm',
   asyncHandler(async (req, res) => {
     await assertCanActFor(req.user!.id, req.user!.role, req.params.userId);
+    const event = await prisma.event.findUnique({ where: { id: req.params.id } });
+    if (!event) throw new HttpError(404, 'Termin nicht gefunden');
+    if (event.isCancelled) throw new HttpError(400, 'Termin ist ausgefallen');
+
+    // Bestätigungsfenster serverseitig erzwingen: Zusage nur bis
+    // confirmationWindowMinutes vor Terminbeginn möglich.
+    if (event.confirmationWindowMinutes != null) {
+      const deadline = new Date(event.startAt.getTime() - event.confirmationWindowMinutes * 60 * 1000);
+      if (new Date() > deadline) throw new HttpError(400, 'Bestätigungsfenster abgelaufen');
+    }
+
     const record = await prisma.attendanceRecord.update({
       where: { eventId_userId: { eventId: req.params.id, userId: req.params.userId } },
       data: { status: 'confirmed' },

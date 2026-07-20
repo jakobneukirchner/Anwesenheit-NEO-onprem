@@ -202,6 +202,8 @@ model SystemMessage {
   targetRoles String // JSON-Array: ["all"] oder ["admin","teacher"] etc.
   targetUsers String // JSON-Array von UserIds oder []
   isActive    Boolean  @default(true)
+  validFrom   DateTime? // optionaler Gültigkeitsbeginn
+  validUntil  DateTime? // optionales Gültigkeitsende
   createdBy   String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt

@@ -143,4 +143,24 @@ router.post(
   }),
 );
 
+// POST /permission-profiles/:id/unassign – Profilzuweisung entfernen
+router.post(
+  '/:id/unassign',
+  requirePermission('canManagePermissionProfiles'),
+  asyncHandler(async (req, res) => {
+    const { userId, groupId } = req.body as { userId?: string; groupId?: string };
+    if (!userId && !groupId) throw new HttpError(400, 'userId oder groupId erforderlich');
+    if (userId) {
+      await prisma.userPermission.deleteMany({ where: { userId, profileId: req.params.id } });
+    }
+    if (groupId) {
+      await prisma.groupPermission.deleteMany({ where: { groupId, profileId: req.params.id } });
+    }
+    await auditLog('UNASSIGN_PERMISSION_PROFILE', req.user!.id, userId ?? groupId ?? null, userId ? 'user' : 'group', {
+      profileId: req.params.id,
+    });
+    res.json({ ok: true });
+  }),
+);
+
 export default router;

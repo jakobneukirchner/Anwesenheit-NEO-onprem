@@ -45,6 +45,15 @@ router.get(
       ],
       backups,
       counts: { users, activeCodes, activeRefreshTokens: refreshTokens },
+      rateLimits: [
+        {
+          name: 'auth',
+          scope: '/auth/login, /auth/register',
+          windowMs: 15 * 60 * 1000,
+          maxRequests: 30,
+          note: 'Pro IP im 15-Minuten-Fenster',
+        },
+      ],
     });
   }),
 );
