@@ -1,0 +1,401 @@
+// Anwesenheit-NEO-onprem – Prisma Schema
+// Datenbank: SQLite (Standard) oder PostgreSQL
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite" // Für PostgreSQL: "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================
+// USERS & AUTH
+// ============================================================
+
+model User {
+  id            String   @id @default(uuid())
+  name          String
+  email         String?  @unique
+  passwordHash  String
+  role          String   // suad | admin | coordinator | teacher | parent | member
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  refreshTokens       RefreshToken[]
+  groupMemberships    GroupMembership[]
+  parentLinks         ParentChildLink[]  @relation("ParentLinks")
+  childLinks          ParentChildLink[]  @relation("ChildLinks")
+  attendanceRecords   AttendanceRecord[]
+  substitutionsAsked  Substitution[]     @relation("SubstitutionRequester")
+  substitutionsFilled Substitution[]     @relation("SubstitutionFiller")
+  messageDismissals   UserMessageDismissal[]
+  chatParticipations  ChatParticipant[]
+  chatMessages        ChatMessage[]
+  userPermissions     UserPermission[]
+  registrationCodeUses RegistrationCodeUse[]
+  auditLogsAsActor    AuditLog[]         @relation("AuditActor")
+  auditLogsAsTarget   AuditLog[]         @relation("AuditTarget")
+
+  @@map("users")
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  userId    String
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  revokedAt DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("refresh_tokens")
+}
+
+// ============================================================
+// GROUPS
+// ============================================================
+
+model Group {
+  id          String   @id @default(uuid())
+  name        String
+  description String?
+  color       String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  memberships       GroupMembership[]
+  events            Event[]
+  groupPermissions  GroupPermission[]
+  registrationCodes RegistrationCode[]
+
+  @@map("groups")
+}
+
+model GroupMembership {
+  id       String   @id @default(uuid())
+  userId   String
+  groupId  String
+  joinedAt DateTime @default(now())
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, groupId])
+  @@map("group_memberships")
+}
+
+model ParentChildLink {
+  id        String   @id @default(uuid())
+  parentId  String
+  childId   String
+  createdAt DateTime @default(now())
+
+  parent User @relation("ParentLinks", fields: [parentId], references: [id], onDelete: Cascade)
+  child  User @relation("ChildLinks",  fields: [childId],  references: [id], onDelete: Cascade)
+
+  @@unique([parentId, childId])
+  @@map("parent_child_links")
+}
+
+// ============================================================
+// EVENTS
+// ============================================================
+
+model EventSeries {
+  id           String   @id @default(uuid())
+  rrule        String   // RFC 5545 RRULE-String
+  createdAt    DateTime @default(now())
+
+  events Event[]
+
+  @@map("event_series")
+}
+
+model Event {
+  id              String    @id @default(uuid())
+  title           String
+  description     String?
+  groupId         String
+  seriesId        String?
+  startAt         DateTime
+  endAt           DateTime
+  location        String?
+  mode            String    @default("open") // open | request | closed
+  isCancelled     Boolean   @default(false)
+  cancelReason    String?
+  signupDeadline  DateTime?
+  withdrawDeadline DateTime?
+  confirmationWindowMinutes Int?
+  minParticipants Int       @default(0)
+  createdBy       String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  group           Group            @relation(fields: [groupId], references: [id])
+  series          EventSeries?     @relation(fields: [seriesId], references: [id])
+  attendanceRecords AttendanceRecord[]
+  substitutions   Substitution[]
+
+  @@map("events")
+}
+
+// ============================================================
+// ATTENDANCE
+// ============================================================
+
+model AttendanceRecord {
+  id          String   @id @default(uuid())
+  eventId     String
+  userId      String
+  status      String   // registered | requested | confirmed | cancelled | withdrawn
+  registeredBy String? // userId des Elternteils, falls Elternteil einträgt
+  note        String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId],  references: [id], onDelete: Cascade)
+
+  @@unique([eventId, userId])
+  @@map("attendance_records")
+}
+
+// ============================================================
+// SUBSTITUTIONS
+// ============================================================
+
+model Substitution {
+  id          String   @id @default(uuid())
+  eventId     String
+  requesterId String
+  fillerId    String?
+  status      String   @default("pending") // pending | confirmed | rejected
+  note        String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  event     Event  @relation(fields: [eventId],     references: [id])
+  requester User   @relation("SubstitutionRequester", fields: [requesterId], references: [id])
+  filler    User?  @relation("SubstitutionFiller",    fields: [fillerId],    references: [id])
+
+  @@map("substitutions")
+}
+
+// ============================================================
+// SYSTEM MESSAGES
+// ============================================================
+
+model SystemMessage {
+  id          String   @id @default(uuid())
+  title       String
+  body        String
+  targetRoles String   // JSON-Array: ["all"] oder ["admin","teacher"] etc.
+  targetUsers String   // JSON-Array von UserIds oder []
+  isActive    Boolean  @default(true)
+  createdBy   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  dismissals UserMessageDismissal[]
+
+  @@map("system_messages")
+}
+
+model UserMessageDismissal {
+  id        String   @id @default(uuid())
+  userId    String
+  messageId String
+  dismissedAt DateTime @default(now())
+
+  user    User          @relation(fields: [userId],    references: [id], onDelete: Cascade)
+  message SystemMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, messageId])
+  @@map("user_message_dismissals")
+}
+
+// ============================================================
+// CHAT
+// ============================================================
+
+model ChatRoom {
+  id        String   @id @default(uuid())
+  name      String?
+  type      String   // direct | group
+  createdAt DateTime @default(now())
+
+  participants ChatParticipant[]
+  messages     ChatMessage[]
+
+  @@map("chat_rooms")
+}
+
+model ChatParticipant {
+  id       String @id @default(uuid())
+  roomId   String
+  userId   String
+  joinedAt DateTime @default(now())
+
+  room ChatRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  user User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([roomId, userId])
+  @@map("chat_participants")
+}
+
+model ChatMessage {
+  id        String    @id @default(uuid())
+  roomId    String
+  senderId  String
+  body      String
+  deletedAt DateTime?
+  deletedBy String?   // userId des Moderators
+  createdAt DateTime  @default(now())
+
+  room   ChatRoom @relation(fields: [roomId],   references: [id], onDelete: Cascade)
+  sender User     @relation(fields: [senderId], references: [id])
+
+  @@map("chat_messages")
+}
+
+// ============================================================
+// SETTINGS
+// ============================================================
+
+model GlobalSetting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+
+  @@map("global_settings")
+}
+
+// ============================================================
+// REGISTRATION CODES
+// ============================================================
+
+model RegistrationCode {
+  id          String    @id @default(uuid())
+  code        String    @unique
+  groupId     String
+  role        String    @default("member")
+  expiresAt   DateTime?
+  maxUses     Int?
+  useCount    Int       @default(0)
+  isActive    Boolean   @default(true)
+  createdBy   String?
+  createdAt   DateTime  @default(now())
+
+  group Group                @relation(fields: [groupId], references: [id])
+  uses  RegistrationCodeUse[]
+
+  @@map("registration_codes")
+}
+
+model RegistrationCodeUse {
+  id        String   @id @default(uuid())
+  codeId    String
+  userId    String
+  usedAt    DateTime @default(now())
+
+  code RegistrationCode @relation(fields: [codeId], references: [id])
+  user User             @relation(fields: [userId], references: [id])
+
+  @@map("registration_code_uses")
+}
+
+// ============================================================
+// PERMISSIONS SYSTEM
+// ============================================================
+
+model Permission {
+  key         String @id  // z.B. "canManageUsers"
+  description String
+
+  profileItems     PermissionProfileItem[]
+  groupPermissions GroupPermission[]
+  userPermissions  UserPermission[]
+
+  @@map("permissions")
+}
+
+model PermissionProfile {
+  id          String   @id @default(uuid())
+  name        String
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  items            PermissionProfileItem[]
+  groupPermissions GroupPermission[]
+  userPermissions  UserPermission[]
+
+  @@map("permission_profiles")
+}
+
+model PermissionProfileItem {
+  id            String @id @default(uuid())
+  profileId     String
+  permissionKey String
+  value         Boolean @default(true)
+
+  profile    PermissionProfile @relation(fields: [profileId],     references: [id], onDelete: Cascade)
+  permission Permission        @relation(fields: [permissionKey], references: [key])
+
+  @@unique([profileId, permissionKey])
+  @@map("permission_profile_items")
+}
+
+model GroupPermission {
+  id            String  @id @default(uuid())
+  groupId       String
+  // Entweder direkt ein Recht ODER ein Profil (nicht beides)
+  permissionKey String?
+  profileId     String?
+  value         Boolean @default(true)
+
+  group      Group              @relation(fields: [groupId],       references: [id], onDelete: Cascade)
+  permission Permission?        @relation(fields: [permissionKey], references: [key])
+  profile    PermissionProfile? @relation(fields: [profileId],     references: [id])
+
+  @@map("group_permissions")
+}
+
+model UserPermission {
+  id            String  @id @default(uuid())
+  userId        String
+  // Entweder direkt ein Recht ODER ein Profil (nicht beides)
+  permissionKey String?
+  profileId     String?
+  value         Boolean @default(true)
+
+  user       User               @relation(fields: [userId],        references: [id], onDelete: Cascade)
+  permission Permission?        @relation(fields: [permissionKey], references: [key])
+  profile    PermissionProfile? @relation(fields: [profileId],     references: [id])
+
+  @@map("user_permissions")
+}
+
+// ============================================================
+// AUDIT LOG
+// ============================================================
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  action     String   // z.B. "VIEW_CHILD_EMAIL", "UPDATE_PERMISSION_PROFILE"
+  actorId    String?
+  targetId   String?  // Betroffener UserId oder EntityId
+  targetType String?  // "user" | "group" | "event" | ...
+  meta       String?  // JSON-String mit Zusatzinfos
+  createdAt  DateTime @default(now())
+
+  actor  User? @relation("AuditActor",  fields: [actorId],  references: [id])
+  target User? @relation("AuditTarget", fields: [targetId], references: [id])
+
+  @@map("audit_logs")
+}

@@ -1,0 +1,36 @@
+{
+  "name": "anwesenheit-neo-onprem",
+  "version": "0.1.0",
+  "description": "Self-hostbares Anwesenheitssystem ohne Firebase",
+  "main": "dist/server.js",
+  "scripts": {
+    "dev": "ts-node-dev --respawn src/server.ts",
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "db:migrate": "prisma migrate deploy",
+    "db:studio": "prisma studio",
+    "setup:suad": "ts-node scripts/setup-suad.ts"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.0.0",
+    "bcrypt": "^5.1.0",
+    "cookie-parser": "^1.4.6",
+    "cors": "^2.8.5",
+    "express": "^4.19.0",
+    "jsonwebtoken": "^9.0.0",
+    "node-cron": "^3.0.3",
+    "socket.io": "^4.7.0"
+  },
+  "devDependencies": {
+    "@types/bcrypt": "^5.0.0",
+    "@types/cookie-parser": "^1.4.7",
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/jsonwebtoken": "^9.0.5",
+    "@types/node": "^20.0.0",
+    "prisma": "^5.0.0",
+    "ts-node": "^10.9.0",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.4.0"
+  }
+}
