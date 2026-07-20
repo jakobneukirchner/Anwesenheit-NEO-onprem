@@ -41,7 +41,6 @@ model User {
   registrationCodeUses RegistrationCodeUse[]
   badges               Badge[]
   auditLogsAsActor     AuditLog[]             @relation("AuditActor")
-  auditLogsAsTarget    AuditLog[]             @relation("AuditTarget")
 
   @@map("users")
 }
@@ -402,8 +401,7 @@ model AuditLog {
   metaEnc    String? // AES-256-GCM-verschlüsselter JSON-String mit Zusatzinfos
   createdAt  DateTime @default(now())
 
-  actor  User? @relation("AuditActor", fields: [actorId], references: [id])
-  target User? @relation("AuditTarget", fields: [targetId], references: [id])
+  actor User? @relation("AuditActor", fields: [actorId], references: [id])
 
   @@map("audit_logs")
 }
