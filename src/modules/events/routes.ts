@@ -64,7 +64,10 @@ router.post(
     const end = new Date(endAt);
 
     if (rrule && count > 1) {
-      const intervalDays = /WEEKLY/i.test(rrule) ? 7 : /MONTHLY/i.test(rrule) ? 30 : 1;
+      const intervalMatch = /INTERVAL=(\d+)/i.exec(rrule);
+      const intervalMult = intervalMatch ? parseInt(intervalMatch[1], 10) : 1;
+      const intervalBase = /WEEKLY/i.test(rrule) ? 7 : /MONTHLY/i.test(rrule) ? 30 : 1;
+      const intervalDays = intervalBase * intervalMult;
       const series = await prisma.eventSeries.create({ data: { rrule } });
       const created = [];
       for (let i = 0; i < count; i++) {
