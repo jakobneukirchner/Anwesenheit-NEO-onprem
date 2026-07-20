@@ -76,6 +76,8 @@ PORT=3000
 NODE_ENV=production
 
 # Datenbank (SQLite Standard)
+# Der Pfad wird von Prisma relativ zum prisma/-Ordner aufgelöst,
+# die Datei liegt daher real unter prisma/data/anwesenheit.db.
 DATABASE_URL="file:./data/anwesenheit.db"
 # PostgreSQL Alternative:
 # DATABASE_URL="postgresql://user:password@localhost:5432/anwesenheit"
@@ -111,7 +113,8 @@ pm2 restart anwesenheit-neo
 ## Backup-Strategie
 
 - Nachtbackup läuft automatisch via node-cron (konfigurierbar in `.env`).
-- SQLite: Datei `data/anwesenheit.db` wird komprimiert nach `backups/` kopiert.
+- SQLite: Datei `prisma/data/anwesenheit.db` (Prisma löst `DATABASE_URL` relativ zum
+  `prisma/`-Ordner auf) wird komprimiert nach `backups/` kopiert.
 - PostgreSQL: `pg_dump` wird ausgeführt.
 - Retention: 30 Tage (konfigurierbar).
 
