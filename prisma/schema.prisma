@@ -15,39 +15,43 @@ datasource db {
 // ============================================================
 
 model User {
-  id            String   @id @default(uuid())
-  name          String
-  email         String?  @unique
-  passwordHash  String
-  role          String   // suad | admin | coordinator | teacher | parent | member
-  isActive      Boolean  @default(true)
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id              String    @id @default(uuid())
+  name            String
+  email           String?   @unique
+  // Interne Notizen – AES-256-GCM-verschlüsselt (JSON: ciphertext/iv/tag/keyVersion)
+  internalNoteEnc String?
+  passwordHash    String
+  role            String // suad | admin | coordinator | teacher | parent | member
+  isActive        Boolean   @default(true)
+  lastActiveAt    DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 
-  refreshTokens       RefreshToken[]
-  groupMemberships    GroupMembership[]
-  parentLinks         ParentChildLink[]  @relation("ParentLinks")
-  childLinks          ParentChildLink[]  @relation("ChildLinks")
-  attendanceRecords   AttendanceRecord[]
-  substitutionsAsked  Substitution[]     @relation("SubstitutionRequester")
-  substitutionsFilled Substitution[]     @relation("SubstitutionFiller")
-  messageDismissals   UserMessageDismissal[]
-  chatParticipations  ChatParticipant[]
-  chatMessages        ChatMessage[]
-  userPermissions     UserPermission[]
+  refreshTokens        RefreshToken[]
+  groupMemberships     GroupMembership[]
+  parentLinks          ParentChildLink[]      @relation("ParentLinks")
+  childLinks           ParentChildLink[]      @relation("ChildLinks")
+  attendanceRecords    AttendanceRecord[]
+  substitutionsAsked   Substitution[]         @relation("SubstitutionRequester")
+  substitutionsFilled  Substitution[]         @relation("SubstitutionFiller")
+  messageDismissals    UserMessageDismissal[]
+  chatParticipations   ChatParticipant[]
+  chatMessages         ChatMessage[]
+  userPermissions      UserPermission[]
   registrationCodeUses RegistrationCodeUse[]
-  auditLogsAsActor    AuditLog[]         @relation("AuditActor")
-  auditLogsAsTarget   AuditLog[]         @relation("AuditTarget")
+  badges               Badge[]
+  auditLogsAsActor     AuditLog[]             @relation("AuditActor")
+  auditLogsAsTarget    AuditLog[]             @relation("AuditTarget")
 
   @@map("users")
 }
 
 model RefreshToken {
-  id        String   @id @default(uuid())
+  id        String    @id @default(uuid())
   userId    String
-  token     String   @unique
+  token     String    @unique
   expiresAt DateTime
-  createdAt DateTime @default(now())
+  createdAt DateTime  @default(now())
   revokedAt DateTime?
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -96,7 +100,7 @@ model ParentChildLink {
   createdAt DateTime @default(now())
 
   parent User @relation("ParentLinks", fields: [parentId], references: [id], onDelete: Cascade)
-  child  User @relation("ChildLinks",  fields: [childId],  references: [id], onDelete: Cascade)
+  child  User @relation("ChildLinks", fields: [childId], references: [id], onDelete: Cascade)
 
   @@unique([parentId, childId])
   @@map("parent_child_links")
@@ -107,9 +111,9 @@ model ParentChildLink {
 // ============================================================
 
 model EventSeries {
-  id           String   @id @default(uuid())
-  rrule        String   // RFC 5545 RRULE-String
-  createdAt    DateTime @default(now())
+  id        String   @id @default(uuid())
+  rrule     String // RFC 5545 RRULE-String
+  createdAt DateTime @default(now())
 
   events Event[]
 
@@ -117,29 +121,30 @@ model EventSeries {
 }
 
 model Event {
-  id              String    @id @default(uuid())
-  title           String
-  description     String?
-  groupId         String
-  seriesId        String?
-  startAt         DateTime
-  endAt           DateTime
-  location        String?
-  mode            String    @default("open") // open | request | closed
-  isCancelled     Boolean   @default(false)
-  cancelReason    String?
-  signupDeadline  DateTime?
-  withdrawDeadline DateTime?
+  id                        String    @id @default(uuid())
+  title                     String
+  // Sensible Freitextfelder – AES-256-GCM (JSON: ciphertext/iv/tag/keyVersion)
+  descriptionEnc            String?
+  locationEnc               String?
+  cancelReasonEnc           String?
+  groupId                   String
+  seriesId                  String?
+  startAt                   DateTime
+  endAt                     DateTime
+  mode                      String    @default("open") // open | request | closed
+  isCancelled               Boolean   @default(false)
+  signupDeadline            DateTime?
+  withdrawDeadline          DateTime?
   confirmationWindowMinutes Int?
-  minParticipants Int       @default(0)
-  createdBy       String?
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  minParticipants           Int       @default(0)
+  createdBy                 String?
+  createdAt                 DateTime  @default(now())
+  updatedAt                 DateTime  @updatedAt
 
-  group           Group            @relation(fields: [groupId], references: [id])
-  series          EventSeries?     @relation(fields: [seriesId], references: [id])
+  group             Group              @relation(fields: [groupId], references: [id])
+  series            EventSeries?       @relation(fields: [seriesId], references: [id])
   attendanceRecords AttendanceRecord[]
-  substitutions   Substitution[]
+  substitutions     Substitution[]
 
   @@map("events")
 }
@@ -149,17 +154,17 @@ model Event {
 // ============================================================
 
 model AttendanceRecord {
-  id          String   @id @default(uuid())
-  eventId     String
-  userId      String
-  status      String   // registered | requested | confirmed | cancelled | withdrawn
+  id           String   @id @default(uuid())
+  eventId      String
+  userId       String
+  status       String // registered | requested | confirmed | cancelled | withdrawn
   registeredBy String? // userId des Elternteils, falls Elternteil einträgt
-  note        String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  noteEnc      String? // AES-256-GCM (JSON: ciphertext/iv/tag/keyVersion)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
   event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  user  User  @relation(fields: [userId],  references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([eventId, userId])
   @@map("attendance_records")
@@ -175,13 +180,13 @@ model Substitution {
   requesterId String
   fillerId    String?
   status      String   @default("pending") // pending | confirmed | rejected
-  note        String?
+  noteEnc     String? // AES-256-GCM (JSON: ciphertext/iv/tag/keyVersion)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  event     Event  @relation(fields: [eventId],     references: [id])
-  requester User   @relation("SubstitutionRequester", fields: [requesterId], references: [id])
-  filler    User?  @relation("SubstitutionFiller",    fields: [fillerId],    references: [id])
+  event     Event @relation(fields: [eventId], references: [id])
+  requester User  @relation("SubstitutionRequester", fields: [requesterId], references: [id])
+  filler    User? @relation("SubstitutionFiller", fields: [fillerId], references: [id])
 
   @@map("substitutions")
 }
@@ -192,10 +197,10 @@ model Substitution {
 
 model SystemMessage {
   id          String   @id @default(uuid())
-  title       String
-  body        String
-  targetRoles String   // JSON-Array: ["all"] oder ["admin","teacher"] etc.
-  targetUsers String   // JSON-Array von UserIds oder []
+  titleEnc    String // AES-256-GCM (JSON: ciphertext/iv/tag/keyVersion)
+  bodyEnc     String // AES-256-GCM (JSON: ciphertext/iv/tag/keyVersion)
+  targetRoles String // JSON-Array: ["all"] oder ["admin","teacher"] etc.
+  targetUsers String // JSON-Array von UserIds oder []
   isActive    Boolean  @default(true)
   createdBy   String?
   createdAt   DateTime @default(now())
@@ -207,12 +212,12 @@ model SystemMessage {
 }
 
 model UserMessageDismissal {
-  id        String   @id @default(uuid())
-  userId    String
-  messageId String
+  id          String   @id @default(uuid())
+  userId      String
+  messageId   String
   dismissedAt DateTime @default(now())
 
-  user    User          @relation(fields: [userId],    references: [id], onDelete: Cascade)
+  user    User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   message SystemMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
 
   @@unique([userId, messageId])
@@ -226,7 +231,7 @@ model UserMessageDismissal {
 model ChatRoom {
   id        String   @id @default(uuid())
   name      String?
-  type      String   // direct | group
+  type      String // direct | group
   createdAt DateTime @default(now())
 
   participants ChatParticipant[]
@@ -236,7 +241,7 @@ model ChatRoom {
 }
 
 model ChatParticipant {
-  id       String @id @default(uuid())
+  id       String   @id @default(uuid())
   roomId   String
   userId   String
   joinedAt DateTime @default(now())
@@ -249,15 +254,16 @@ model ChatParticipant {
 }
 
 model ChatMessage {
-  id        String    @id @default(uuid())
-  roomId    String
-  senderId  String
-  body      String
-  deletedAt DateTime?
-  deletedBy String?   // userId des Moderators
-  createdAt DateTime  @default(now())
+  id                String    @id @default(uuid())
+  roomId            String
+  senderId          String
+  bodyEnc           String // AES-256-GCM (JSON: ciphertext/iv/tag/keyVersion)
+  moderationNoteEnc String? // AES-256-GCM Moderationsnotiz
+  deletedAt         DateTime?
+  deletedBy         String? // userId des Moderators
+  createdAt         DateTime  @default(now())
 
-  room   ChatRoom @relation(fields: [roomId],   references: [id], onDelete: Cascade)
+  room   ChatRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)
   sender User     @relation(fields: [senderId], references: [id])
 
   @@map("chat_messages")
@@ -280,28 +286,28 @@ model GlobalSetting {
 // ============================================================
 
 model RegistrationCode {
-  id          String    @id @default(uuid())
-  code        String    @unique
-  groupId     String
-  role        String    @default("member")
-  expiresAt   DateTime?
-  maxUses     Int?
-  useCount    Int       @default(0)
-  isActive    Boolean   @default(true)
-  createdBy   String?
-  createdAt   DateTime  @default(now())
+  id        String    @id @default(uuid())
+  code      String    @unique
+  groupId   String
+  role      String    @default("member")
+  expiresAt DateTime?
+  maxUses   Int?
+  useCount  Int       @default(0)
+  isActive  Boolean   @default(true)
+  createdBy String?
+  createdAt DateTime  @default(now())
 
-  group Group                @relation(fields: [groupId], references: [id])
+  group Group                 @relation(fields: [groupId], references: [id])
   uses  RegistrationCodeUse[]
 
   @@map("registration_codes")
 }
 
 model RegistrationCodeUse {
-  id        String   @id @default(uuid())
-  codeId    String
-  userId    String
-  usedAt    DateTime @default(now())
+  id     String   @id @default(uuid())
+  codeId String
+  userId String
+  usedAt DateTime @default(now())
 
   code RegistrationCode @relation(fields: [codeId], references: [id])
   user User             @relation(fields: [userId], references: [id])
@@ -314,7 +320,7 @@ model RegistrationCodeUse {
 // ============================================================
 
 model Permission {
-  key         String @id  // z.B. "canManageUsers"
+  key         String @id // z.B. "canManageUsers"
   description String
 
   profileItems     PermissionProfileItem[]
@@ -339,12 +345,12 @@ model PermissionProfile {
 }
 
 model PermissionProfileItem {
-  id            String @id @default(uuid())
+  id            String  @id @default(uuid())
   profileId     String
   permissionKey String
   value         Boolean @default(true)
 
-  profile    PermissionProfile @relation(fields: [profileId],     references: [id], onDelete: Cascade)
+  profile    PermissionProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
   permission Permission        @relation(fields: [permissionKey], references: [key])
 
   @@unique([profileId, permissionKey])
@@ -359,9 +365,9 @@ model GroupPermission {
   profileId     String?
   value         Boolean @default(true)
 
-  group      Group              @relation(fields: [groupId],       references: [id], onDelete: Cascade)
+  group      Group              @relation(fields: [groupId], references: [id], onDelete: Cascade)
   permission Permission?        @relation(fields: [permissionKey], references: [key])
-  profile    PermissionProfile? @relation(fields: [profileId],     references: [id])
+  profile    PermissionProfile? @relation(fields: [profileId], references: [id])
 
   @@map("group_permissions")
 }
@@ -374,9 +380,9 @@ model UserPermission {
   profileId     String?
   value         Boolean @default(true)
 
-  user       User               @relation(fields: [userId],        references: [id], onDelete: Cascade)
+  user       User               @relation(fields: [userId], references: [id], onDelete: Cascade)
   permission Permission?        @relation(fields: [permissionKey], references: [key])
-  profile    PermissionProfile? @relation(fields: [profileId],     references: [id])
+  profile    PermissionProfile? @relation(fields: [profileId], references: [id])
 
   @@map("user_permissions")
 }
@@ -387,15 +393,58 @@ model UserPermission {
 
 model AuditLog {
   id         String   @id @default(uuid())
-  action     String   // z.B. "VIEW_CHILD_EMAIL", "UPDATE_PERMISSION_PROFILE"
+  action     String // z.B. "VIEW_CHILD_EMAIL", "UPDATE_PERMISSION_PROFILE"
   actorId    String?
-  targetId   String?  // Betroffener UserId oder EntityId
-  targetType String?  // "user" | "group" | "event" | ...
-  meta       String?  // JSON-String mit Zusatzinfos
+  targetId   String? // Betroffener UserId oder EntityId
+  targetType String? // "user" | "group" | "event" | ...
+  metaEnc    String? // AES-256-GCM-verschlüsselter JSON-String mit Zusatzinfos
   createdAt  DateTime @default(now())
 
-  actor  User? @relation("AuditActor",  fields: [actorId],  references: [id])
+  actor  User? @relation("AuditActor", fields: [actorId], references: [id])
   target User? @relation("AuditTarget", fields: [targetId], references: [id])
 
   @@map("audit_logs")
+}
+
+// ============================================================
+// SECURITY / SECRETS
+// ============================================================
+
+// Systemgeheimnisse (Hashes, nie im Klartext gespeichert).
+// type: "recovery_hash" | "suad_special_hash" | "suad_bootstrap_hash"
+model SystemSecret {
+  id        String   @id @default(uuid())
+  type      String   @unique
+  valueHash String // SHA-256 (recovery) bzw. bcrypt (Sonderkennwort/Bootstrap)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("system_secrets")
+}
+
+// 12h gültige SuAd-Keys, ausgestellt von bestehenden SuAds.
+model SuAdKey {
+  id        String    @id @default(uuid())
+  keyHash   String    @unique // SHA-256 des SuAd-Keys
+  createdBy String? // userId des ausstellenden SuAd
+  expiresAt DateTime
+  usedAt    DateTime?
+  usedBy    String? // userId, der den Key eingelöst hat
+  createdAt DateTime  @default(now())
+
+  @@map("suad_keys")
+}
+
+// Badges (Tarnung für "Activate Special", u.a. "Dev"-Badge).
+model Badge {
+  id         String   @id @default(uuid())
+  userId     String
+  badge      String // z.B. "Dev"
+  assignedBy String? // userId des vergebenden Admin/SuAd
+  createdAt  DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, badge])
+  @@map("badges")
 }

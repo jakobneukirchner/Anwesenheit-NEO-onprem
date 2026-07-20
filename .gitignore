@@ -1,0 +1,11 @@
+node_modules/
+dist/
+data/
+backups/
+uploads/
+*.log
+.env
+.env.local
+prisma/*.db
+prisma/*.db-journal
+frontend/dist/
