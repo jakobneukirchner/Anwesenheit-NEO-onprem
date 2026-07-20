@@ -113,6 +113,34 @@ export async function decryptFieldOrNull(
 }
 
 // ---------------------------------------------------------------------------
+// DB-Hilfsfunktionen: JSON-verpacktes EncryptedField ↔ Klartext
+// Die *Enc-Spalten im Prisma-Schema speichern das JSON dieser Struktur.
+// ---------------------------------------------------------------------------
+
+/** Verschlüsselt einen (optionalen) Wert und liefert den JSON-String für die *Enc-Spalte. */
+export async function packField(
+  value: string | null | undefined,
+): Promise<string | null> {
+  if (value == null || value === '') return null;
+  const field = await encryptField(value);
+  return JSON.stringify(field);
+}
+
+/** Entschlüsselt den JSON-String einer *Enc-Spalte zurück in Klartext. */
+export async function unpackField(
+  packed: string | null | undefined,
+): Promise<string | null> {
+  if (packed == null || packed === '') return null;
+  try {
+    const field = JSON.parse(packed) as EncryptedField;
+    return await decryptField(field);
+  } catch {
+    // Nicht entschlüsselbar (z.B. korrupter Datensatz) → null statt Absturz
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Backup-Verschlüsselung / -Entschlüsselung
 // ---------------------------------------------------------------------------
 
