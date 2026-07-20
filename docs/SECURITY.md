@@ -10,7 +10,7 @@
 - Technische Join-Felder (IDs, Rollen, Status, Timestamps) bleiben im Klartext, damit das System funktionsfähig ist.
 - Kryptografisch: **AES-256-GCM** mit pro-Datensatz-IV.
 - Ein **Recovery-Key** (256 Bit, hex) wird einmalig beim Setup generiert und nur einmal angezeigt.
-- Ein separater **SuAd-Sonderkennwort-Hash** (argon2id) wird beim ersten SuAd-Setup gesetzt und kann nie verändert werden.
+- Ein separater **SuAd-Sonderkennwort-Hash** (bcrypt, Cost 12) wird beim ersten SuAd-Setup gesetzt und kann nie verändert werden.
 
 ---
 
@@ -22,7 +22,7 @@
 | **Chat / Nachrichten** | ChatMessage.bodyEnc, SystemMessage.bodyEnc/titleEnc | AES-256-GCM verschlüsselt |
 | **Termindetails** | Beschreibung, Ort, Absagegrund, Teilnahme-Notizen | AES-256-GCM verschlüsselt |
 | **Technische Relationsfelder** | id, userId, groupId, role, status, timestamps | Klartext (notwendig) |
-| **Passwörter** | passwordHash | argon2id, kein Klartext |
+| **Passwörter** | passwordHash | bcrypt (Cost 12), kein Klartext |
 | **Backup-Dateien** | *.db.enc, *.sql.enc | gzip + AES-256-GCM (ENCRYPTION_KEY) |
 
 ---
@@ -38,7 +38,7 @@
 │  RECOVERY_KEY  (32 Byte hex, einmalig beim Setup)           │
 │      └─ Backup-Entschlüsselung bei Datenverlust             │
 │                                                             │
-│  SUAD_SECRET  (argon2id-Hash, nie änderbar)                 │
+│  SUAD_SECRET  (bcrypt-Hash (Cost 12), nie änderbar)                 │
 │      └─ Voraussetzung zum Ausstellen neuer SuAd-Keys        │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -68,9 +68,10 @@
 ## 4  Recovery-Key-Flow
 
 ```
-Setup-Schritt 1: bootstrap (scripts/bootstrap.ts)
+Setup-Schritt 1: Bootstrap (POST /internal/suad/activate-special mit Bootstrap-Code)
+  └─ nur möglich, solange noch kein SuAd existiert
   └─ generiere 32 zufällige Bytes → RECOVERY_KEY (hex, 64 Zeichen)
-  └─ zeige RECOVERY_KEY einmalig in der Konsole
+  └─ gib RECOVERY_KEY einmalig in der API-Antwort zurück (nie erneut abrufbar)
   └─ speichere SHA-256(RECOVERY_KEY) in system_secrets (type='recovery_hash')
   └─ RECOVERY_KEY selbst wird NICHT in der DB gespeichert
 
@@ -101,12 +102,12 @@ Wiederherstellung:
 - Beim ersten Einlösen dieses Codes:
   1. Account wird mit Rolle `suad` angelegt (Name/E-Mail AES-verschlüsselt)
   2. **Recovery-Key** wird generiert und einmalig in der Konsole ausgegeben
-  3. **SuAd-Sonderkennwort** wird gesetzt (argon2id-Hash, unveränderlich)
+  3. **SuAd-Sonderkennwort** wird gesetzt (bcrypt-Hash (Cost 12), unveränderlich)
 
 ### 5.2  Weitere SuAds
 
 - Nur ein bestehender SuAd kann neue **SuAd-Keys** ausstellen (12 Stunden gültig, Format: `XXXX-XXXX-XXXX-XXXX`).
-- Voraussetzung: SuAd gibt sein **unveränderliches Sonderkennwort** ein (argon2id-Verifikation).
+- Voraussetzung: SuAd gibt sein **unveränderliches Sonderkennwort** ein (bcrypt-Verifikation (Cost 12)).
 - Mit einem gültigen SuAd-Key kann:
   - ein neuer Account mit Rolle `suad` erstellt werden
   - ein bestehender Account zu `suad` hochgestuft werden
@@ -134,7 +135,7 @@ Wiederherstellung:
 |----------|-----------|
 | Verschlüsselung ruhender Daten | AES-256-GCM für sensitive Felder (`*Enc`) |
 | Verschlüsselung Backups | AES-256-GCM + ENCRYPTION_KEY, Recovery möglich |
-| Passwort-Sicherheit | argon2id |
+| Passwort-Sicherheit | bcrypt (Cost 12) |
 | Zugriffskontrolle | resolvePermission() + JWT + httpOnly-Cookies |
 | Audit-Trail | AuditLog für alle sensitiven Aktionen (metaEnc verschlüsselt) |
 | Recht auf Löschung | Cascade-Delete + Audit-Eintrag bei Löschung |

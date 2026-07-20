@@ -69,21 +69,27 @@ auf "erste gefundene" oder "restriktivste"), Standard: erste gefundene.*
 | `canManageSchedule` | Termine anlegen/bearbeiten/löschen/absagen | ✅ | ✅ | ✅ | ❌ | ❌ | ✅ |
 | `canManageSettings` | Globale Systemeinstellungen ändern | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ |
 | `canManageSystemMessages` | Systemnachrichten verwalten | ✅ | ✅ | ❌ | ❌ | ❌ | ✅ |
-| `canViewSystemTab` | Admin-System-Tab (Branding, Rate-Limit…) | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ |
+| `canManageBranding` | Custom Branding (Logo, Farben, Name, Favicon) ändern | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ |
+| `canViewSystemTab` | Admin-System-Tab (Cronjobs, Backups, Rate-Limit…) | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ |
 | `canViewChildEmail` | E-Mail-Adressen von Kindern einsehen | ❌ | ❌ | ❌ | ❌ | ❌ | ✅¹ |
 | `canGenerateRegistrationCodes` | Registrierungscodes erzeugen/verwalten | ✅ | ✅ | ❌ | ❌ | ❌ | ✅ |
+| `canManageRegistrationCodeLimits` | Ablaufdatum/Nutzungslimit von Codes ändern | ✅ | ✅ | ❌ | ❌ | ❌ | ✅ |
 | `canActAsParentForChild` | Anwesenheit für verknüpftes Kind eintragen | ❌ | ❌ | ❌ | ✅ | ❌ | ✅ |
 | `childCanSelfWithdraw` | Kind darf sich selbst abmelden | ❌ | ❌ | ❌ | ❌ | ✅ | ✅ |
 | `canManagePermissionProfiles` | Rechteprofile erstellen/bearbeiten/zuweisen | ✅ | ✅ | ❌ | ❌ | ❌ | ✅ |
 | `canStartDirectChat` | Einzelchats starten | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `canStartGroupChat` | Gruppenchats starten | ✅ | ✅ | ✅ | ❌ | ❌ | ✅ |
 | `canUseChat` | Chat grundsätzlich nutzen | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `canModerateChat` | Chat-Nachrichten anderer löschen/moderieren | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ |
 | `canManageSubstitutions` | Vertretungsanfragen stellen/bestätigen | ✅ | ✅ | ✅ | ❌ | ❌ | ✅ |
 | `canViewStatistics` | Statistik-Modul einsehen | ✅ | ✅ | ❌ | ❌ | ❌ | ✅ |
-| `canExportReports` | PDF/CSV-Reports exportieren | ✅ | ✅ | ❌ | ❌ | ❌ | ✅ |
+| `canExportReports` | CSV-Reports exportieren | ✅ | ✅ | ❌ | ❌ | ❌ | ✅ |
+| `canViewAuditLog` | Audit-Log einsehen | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
+| `canAssignBadges` | Badges (z. B. „Dev") an Nutzer vergeben | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ |
 
 ¹ `canViewChildEmail` ist **technisch fest an SuAd gebunden** und kann über das
 Rechtesystem keiner anderen Rolle zugewiesen werden, auch nicht als Einzelperson-Override.
+Der Rechtekatalog ist als einzige Quelle der Wahrheit in `src/utils/permissionCatalog.ts` definiert.
 
 ## Rollendefinitionen
 

@@ -70,9 +70,14 @@ kein spezifisches Recht.
 | Methode | Pfad | Beschreibung | Recht |
 |---|---|---|---|
 | GET | `/events/:id/attendance` | Anmeldungen für Termin | [AUTH] |
-| POST | `/events/:id/attendance` | Anmelden (für sich oder Kind) | [AUTH] |
-| DELETE | `/events/:id/attendance/:userId` | Abmelden | [AUTH] |
-| POST | `/events/:id/attendance/:userId/confirm` | Anfrage bestätigen | `canManageSchedule` |
+| POST | `/events/:id/attendance` | Status setzen (für sich, verknüpftes Kind oder als Manager) | [AUTH]¹ |
+| POST | `/events/:id/attendance/:userId/confirm` | Anfrage bestätigen (→ confirmed) | [AUTH]¹ |
+| POST | `/events/:id/attendance/:userId/decline` | Anfrage ablehnen (→ cancelled) | [AUTH]¹ |
+| DELETE | `/events/:id/attendance/:userId` | Zurückziehen (→ withdrawn) | [AUTH]¹ |
+
+¹ Zugriff wird über `assertCanActFor` geprüft: entweder eigener Datensatz,
+`canActAsParentForChild` bei verknüpftem Kind, oder `canManageSchedule` (Manager).
+Der Modus des Termins (`open`/`request`/`closed`) sowie An-/Abmeldefristen werden zusätzlich erzwungen.
 
 ---
 
@@ -104,15 +109,13 @@ kein spezifisches Recht.
 |---|---|---|---|
 | GET | `/chat/rooms` | Eigene Räume | `canUseChat` |
 | POST | `/chat/rooms` | Raum erstellen | `canStartDirectChat` oder `canStartGroupChat` |
-| GET | `/chat/rooms/:id/messages` | Nachrichtenverlauf | `canUseChat` |
-| DELETE | `/chat/messages/:id` | Nachricht löschen (Moderation) | `canManageUsers` (admin/SuAd) |
+| GET | `/chat/rooms/:id/messages` | Nachrichtenverlauf (entschlüsselt) | `canUseChat` |
+| DELETE | `/chat/messages/:id` | Nachricht löschen (Moderation, auditiert) | `canModerateChat` |
 
-WebSocket-Events (Socket.IO):
-- `chat:message` – neue Nachricht senden/empfangen
-- `chat:typing` – Tipp-Indikator
-- `chat:read` – Gelesen-Status
-- `events:update` – Live-Update bei Terminänderungen
-- `attendance:update` – Live-Update bei Anmeldungsänderungen
+WebSocket-Events (Socket.IO, JWT-Cookie-Auth beim Handshake):
+- `chat:join` – Raum beitreten (Teilnahme wird serverseitig geprüft)
+- `chat:message` – Nachricht senden/empfangen (persistiert verschlüsselt, prüft `canUseChat` + Teilnahme)
+- `chat:typing` – Tipp-Indikator (nur an Raumteilnehmer)
 
 ---
 
@@ -121,10 +124,14 @@ WebSocket-Events (Socket.IO):
 | Methode | Pfad | Beschreibung | Recht |
 |---|---|---|---|
 | GET | `/permission-profiles` | Alle Profile | `canManagePermissionProfiles` |
+| GET | `/permission-profiles/catalog` | Vollständiger Rechtekatalog | `canManagePermissionProfiles` |
 | POST | `/permission-profiles` | Profil erstellen | `canManagePermissionProfiles` |
 | GET | `/permission-profiles/:id` | Profil mit Zuweisungsübersicht | `canManagePermissionProfiles` |
 | PATCH | `/permission-profiles/:id` | Profil bearbeiten | `canManagePermissionProfiles` |
 | DELETE | `/permission-profiles/:id` | Profil löschen | `canManagePermissionProfiles` |
+| POST | `/permission-profiles/:id/assign` | Profil an Gruppe/Person zuweisen | `canManagePermissionProfiles` |
+
+`canViewChildEmail` wird bei Profil-Erstellung/-Bearbeitung serverseitig abgelehnt.
 
 ---
 
@@ -133,7 +140,8 @@ WebSocket-Events (Socket.IO):
 | Methode | Pfad | Beschreibung | Recht |
 |---|---|---|---|
 | GET | `/registration-codes` | Alle Codes (mit Nutzungsstatus) | `canGenerateRegistrationCodes` |
-| POST | `/registration-codes` | Code erstellen | `canGenerateRegistrationCodes` |
+| POST | `/registration-codes` | Code erstellen (Format `AA11-B2B2-C33C-44DD`) | `canGenerateRegistrationCodes` |
+| PATCH | `/registration-codes/:id` | Ablaufdatum/Nutzungslimit ändern | `canManageRegistrationCodeLimits` |
 | DELETE | `/registration-codes/:id` | Code deaktivieren | `canGenerateRegistrationCodes` |
 
 ---
@@ -142,10 +150,24 @@ WebSocket-Events (Socket.IO):
 
 | Methode | Pfad | Beschreibung | Recht |
 |---|---|---|---|
-| GET | `/settings` | Alle öffentlichen Einstellungen | [AUTH] |
+| GET | `/settings/branding` | Branding-Infos (public, vor Auth) | – |
+| GET | `/settings` | Öffentliche Einstellungen | [AUTH] |
 | GET | `/settings/all` | Alle Einstellungen inkl. System | `canManageSettings` |
-| PUT | `/settings` | Einstellungen speichern | `canManageSettings` |
-| GET | `/settings/branding` | Branding-Infos (public) | – |
+| PUT | `/settings` | Einstellungen speichern (Branding-Keys ausgenommen) | `canManageSettings` |
+
+---
+
+## Branding
+
+| Methode | Pfad | Beschreibung | Recht |
+|---|---|---|---|
+| GET | `/branding` | Aktuelle Branding-Werte | – (public) |
+| GET | `/branding/manifest.json` | Dynamisches PWA-Manifest | – (public) |
+| PUT | `/branding` | Branding-Werte setzen (auditiert) | `canManageBranding` |
+| POST | `/branding/logo` | Logo-Upload (PNG/JPEG/WEBP/SVG/ICO, ≤2 MB) | `canManageBranding` |
+| POST | `/branding/favicon` | Favicon-Upload | `canManageBranding` |
+
+Das dynamische Manifest ist zusätzlich unter dem Root-Pfad `GET /manifest.json` erreichbar.
 
 ---
 
@@ -154,15 +176,50 @@ WebSocket-Events (Socket.IO):
 | Methode | Pfad | Beschreibung | Recht |
 |---|---|---|---|
 | GET | `/statistics/overview` | Kennzahlen | `canViewStatistics` |
-| GET | `/statistics/attendance` | Anwesenheitsquoten | `canViewStatistics` |
-| GET | `/reports/export` | PDF/CSV-Export | `canExportReports` |
+| GET | `/statistics/attendance` | Anwesenheitsquoten je Status | `canViewStatistics` |
+| GET | `/reports/export` | CSV-Export der Anwesenheiten (`?groupId=`) | `canExportReports` |
 
 ---
 
-## SuAd-Interna (Pfad: /internal)
+## System
 
 | Methode | Pfad | Beschreibung | Recht |
 |---|---|---|---|
-| GET | `/internal/suad/users` | Alle Nutzer inkl. Kind-E-Mails | SuAd only |
-| GET | `/internal/suad/audit-logs` | Vollständige Audit-Logs | SuAd only |
-| GET | `/internal/suad/jobs` | Cronjob-Status | SuAd only |
+| GET | `/system/status` | Uptime, Cronjobs, letzte Backups, Kennzahlen | `canViewSystemTab` |
+
+---
+
+## Eltern-Kind-Verknüpfungen
+
+| Methode | Pfad | Beschreibung | Recht |
+|---|---|---|---|
+| GET | `/parent-child-links` | Verknüpfungen (`?parentId=`/`?childId=`) | `canManageUsers` |
+| POST | `/parent-child-links` | Verknüpfung anlegen (prüft Max-Limits) | `canManageUsers` |
+| DELETE | `/parent-child-links/:id` | Verknüpfung entfernen | `canManageUsers` |
+
+---
+
+## Badges
+
+| Methode | Pfad | Beschreibung | Recht |
+|---|---|---|---|
+| GET | `/badges` | Badges eines Nutzers (`?userId=`, sonst eigene) | [AUTH] |
+| POST | `/badges` | Badge zuweisen (auditiert) | `canAssignBadges` |
+| DELETE | `/badges/:id` | Badge entfernen | `canAssignBadges` |
+
+---
+
+## SuAd-Interna (Pfad: /internal, ohne /api-Präfix)
+
+| Methode | Pfad | Beschreibung | Recht |
+|---|---|---|---|
+| POST | `/internal/suad/activate-special` | Getarnte Badge-/SuAd-Aktivierung (SuAd-Key oder Bootstrap) | [AUTH] |
+| POST | `/internal/suad/keys` | 12-h-SuAd-Key ausstellen (Sonderkennwort nötig) | SuAd only |
+| GET | `/internal/suad/keys` | Ausgestellte Keys (ohne Klartext) | SuAd only |
+| GET | `/internal/suad/users` | Alle Nutzer inkl. Kind-E-Mails (auditiert) | SuAd only |
+| GET | `/internal/suad/audit-logs` | Vollständige, entschlüsselte Audit-Logs | SuAd only |
+| GET | `/internal/suad/jobs` | Cronjob-Zeitpläne | SuAd only |
+
+`activate-special` erfordert nur Authentifizierung (getarnt als Badge-Freischaltung unter
+„Mein Profil"). Ein gültiger SuAd-Key stuft den Account zu `suad` hoch; existiert noch kein
+SuAd, aktiviert der Bootstrap-Code den ersten SuAd und gibt einmalig den Recovery-Key zurück.
