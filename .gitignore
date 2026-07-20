@@ -1,5 +1,5 @@
 node_modules/
-dist/
+/dist/
 data/
 backups/
 uploads/
@@ -8,4 +8,3 @@ uploads/
 .env.local
 prisma/*.db
 prisma/*.db-journal
-frontend/dist/
