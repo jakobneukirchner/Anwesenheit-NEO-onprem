@@ -794,16 +794,22 @@
         if (!(full.parents || []).length) parentsBox.appendChild(h('div', { class: 'muted' }, ['Keine Eltern verknüpft.']));
       }).catch(function (ex) { err.textContent = ex.message; });
     }
-    var childId = fieldInput('Kind-User-ID hinzufügen', 'childId');
+    var childSel = h('select', {}, [h('option', { value: '' }, ['Kind wählen…'])]);
+    API.get('/users').then(function (users) {
+      (users || []).filter(function (c) { return c.id !== u.id; }).forEach(function (c) {
+        childSel.appendChild(h('option', { value: c.id }, [c.name + ' (' + c.role + ')']));
+      });
+    }).catch(function () { err.textContent = 'Nutzerliste nicht verfügbar.'; });
     var addChild = h('button', { class: 'btn tonal', onclick: function () {
+      if (!childSel.value) { snack('Bitte ein Kind wählen', true); return; }
       // Backend: POST /users/:id/parent-links mit :id = Kind, body.parentId = Elternteil.
-      API.post('/users/' + childId.input.value.trim() + '/parent-links', { parentId: u.id })
-        .then(function () { childId.input.value = ''; reload(); }).catch(function (ex) { snack(ex.message, true); });
+      API.post('/users/' + childSel.value + '/parent-links', { parentId: u.id })
+        .then(function () { childSel.value = ''; reload(); }).catch(function (ex) { snack(ex.message, true); });
     } }, [icon('add'), 'Als Elternteil verknüpfen']);
     reload();
     d = dialog('Eltern-Kind – ' + esc(u.name), [
       h('h3', {}, ['Kinder von ' + esc(u.name)]), childrenBox,
-      h('div', { class: 'row' }, [childId.wrap]), h('div', { class: 'row' }, [addChild]),
+      h('div', { class: 'field' }, [h('label', {}, ['Kind hinzufügen']), childSel]), h('div', { class: 'row' }, [addChild]),
       h('h3', {}, ['Eltern von ' + esc(u.name)]), parentsBox, err,
     ], [h('button', { class: 'btn text', onclick: function () { d.close(); } }, ['Schließen'])]);
   }
@@ -886,20 +892,26 @@
     }).catch(function (ex) { showError(node, ex); });
   }
   function codeDialog() {
-    var group = fieldInput('Gruppen-ID', 'groupId');
+    var groupSel = h('select', { name: 'groupId' }, [h('option', { value: '' }, ['Gruppe wählen…'])]);
+    var err = h('div', { class: 'error-text' });
+    API.get('/groups').then(function (groups) {
+      (groups || []).forEach(function (g) { groupSel.appendChild(h('option', { value: g.id }, [g.name])); });
+    }).catch(function () { err.textContent = 'Gruppen konnten nicht geladen werden.'; });
     var roleSel = h('select', { name: 'role' }, ['member', 'parent', 'teacher', 'coordinator'].map(function (r) { return h('option', { value: r }, [r]); }));
     var maxUses = fieldInput('Max. Nutzungen (optional)', 'maxUses', 'number');
-    var err = h('div', { class: 'error-text' });
     var d;
     var save = h('button', { class: 'btn' }, [icon('save'), 'Erzeugen']);
     save.addEventListener('click', function () {
+      err.textContent = '';
+      if (!groupSel.value) { err.textContent = 'Bitte eine Gruppe wählen.'; return; }
       API.post('/registration-codes', {
-        groupId: group.input.value.trim(), role: roleSel.value,
+        groupId: groupSel.value, role: roleSel.value,
         maxUses: maxUses.input.value ? parseInt(maxUses.input.value, 10) : undefined,
       }).then(function (c) { d.close(); snack('Code: ' + (c && c.code ? c.code : 'erstellt')); navigate('codes'); })
         .catch(function (ex) { err.textContent = ex.message; });
     });
-    d = dialog('Neuer Registrierungscode', [group.wrap,
+    d = dialog('Neuer Registrierungscode', [
+      h('div', { class: 'field' }, [h('label', {}, ['Gruppe']), groupSel]),
       h('div', { class: 'field' }, [h('label', {}, ['Rolle']), roleSel]), maxUses.wrap, err],
       [h('button', { class: 'btn text', onclick: function () { d.close(); } }, ['Abbrechen']), save]);
   }
@@ -1144,17 +1156,22 @@
       .catch(function (ex) { snack(ex.message, true); });
   }
   function subDialog() {
-    var evId = fieldInput('Termin-ID', 'eventId');
+    var evSel = h('select', { name: 'eventId' }, [h('option', { value: '' }, ['Termin wählen…'])]);
     var noteWrap = h('div', { class: 'field' }, [h('label', {}, ['Notiz (optional)']), h('textarea', { rows: '2' })]);
     var err = h('div', { class: 'error-text' });
     var d;
+    API.get('/events?from=' + encodeURIComponent(new Date().toISOString())).then(function (events) {
+      (events || []).forEach(function (ev) { evSel.appendChild(h('option', { value: ev.id }, [ev.title + ' · ' + fmtDate(ev.startAt)])); });
+    }).catch(function () { err.textContent = 'Termine konnten nicht geladen werden.'; });
     var save = h('button', { class: 'btn' }, [icon('save'), 'Anfragen']);
     save.addEventListener('click', function () {
-      API.post('/substitutions', { eventId: evId.input.value.trim(), note: noteWrap.querySelector('textarea').value.trim() || undefined })
+      err.textContent = '';
+      if (!evSel.value) { err.textContent = 'Bitte einen Termin wählen.'; return; }
+      API.post('/substitutions', { eventId: evSel.value, note: noteWrap.querySelector('textarea').value.trim() || undefined })
         .then(function () { d.close(); snack('Vertretung angefragt'); navigate('subs'); })
         .catch(function (ex) { err.textContent = ex.message; });
     });
-    d = dialog('Vertretung anfragen', [evId.wrap, noteWrap, err],
+    d = dialog('Vertretung anfragen', [h('div', { class: 'field' }, [h('label', {}, ['Termin']), evSel]), noteWrap, err],
       [h('button', { class: 'btn text', onclick: function () { d.close(); } }, ['Abbrechen']), save]);
   }
 
