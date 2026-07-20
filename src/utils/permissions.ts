@@ -11,123 +11,44 @@
  */
 
 import { prisma } from '../db/client';
+import { ALL_PERMISSION_KEYS } from './permissionCatalog';
+
+/** Baut ein vollständiges Default-Objekt: alle Keys false, gelistete true. */
+function defaults(granted: string[]): Record<string, boolean> {
+  const base: Record<string, boolean> = {};
+  for (const key of ALL_PERMISSION_KEYS) base[key] = false;
+  for (const key of granted) base[key] = true;
+  return base;
+}
+
+// canViewChildEmail wird NIE hier gesetzt – es ist fest an die Rolle suad
+// gebunden und wird in resolvePermission gesondert behandelt.
+
+const memberGrants = ['canUseChat', 'childCanSelfWithdraw'];
+const parentGrants = ['canUseChat', 'canStartDirectChat', 'canActAsParentForChild'];
+const teacherGrants = [
+  'canUseChat', 'canStartDirectChat', 'canStartGroupChat',
+  'canManageSchedule', 'canManageSubstitutions',
+];
+const coordinatorGrants = [
+  ...teacherGrants, 'canManageUsers', 'canManageGroups',
+  'canGenerateRegistrationCodes', 'canManageRegistrationCodeLimits',
+  'canManagePermissionProfiles', 'canManageSystemMessages',
+  'canViewStatistics', 'canExportReports',
+];
+// admin: fast alle Rechte außer canViewChildEmail
+const adminGrants = ALL_PERMISSION_KEYS.filter((k) => k !== 'canViewChildEmail');
+// suad: alle Rechte (canViewChildEmail via Rolle in resolvePermission)
+const suadGrants = ALL_PERMISSION_KEYS.filter((k) => k !== 'canViewChildEmail');
 
 // Systemstandards je Rolle
 const roleDefaults: Record<string, Record<string, boolean>> = {
-  suad: {
-    canManageUsers: true,
-    canManageGroups: true,
-    canManageSchedule: true,
-    canManageSettings: true,
-    canManageSystemMessages: true,
-    canViewSystemTab: true,
-    canViewChildEmail: true,
-    canGenerateRegistrationCodes: true,
-    canActAsParentForChild: true,
-    childCanSelfWithdraw: true,
-    canManagePermissionProfiles: true,
-    canStartDirectChat: true,
-    canStartGroupChat: true,
-    canUseChat: true,
-    canManageSubstitutions: true,
-    canViewStatistics: true,
-    canExportReports: true,
-  },
-  admin: {
-    canManageUsers: true,
-    canManageGroups: true,
-    canManageSchedule: true,
-    canManageSettings: true,
-    canManageSystemMessages: true,
-    canViewSystemTab: true,
-    canViewChildEmail: false, // Bewusst false, nur SuAd
-    canGenerateRegistrationCodes: true,
-    canActAsParentForChild: false,
-    childCanSelfWithdraw: false,
-    canManagePermissionProfiles: true,
-    canStartDirectChat: true,
-    canStartGroupChat: true,
-    canUseChat: true,
-    canManageSubstitutions: true,
-    canViewStatistics: true,
-    canExportReports: true,
-  },
-  coordinator: {
-    canManageUsers: true,
-    canManageGroups: true,
-    canManageSchedule: true,
-    canManageSettings: false,
-    canManageSystemMessages: true,
-    canViewSystemTab: false,
-    canViewChildEmail: false,
-    canGenerateRegistrationCodes: true,
-    canActAsParentForChild: false,
-    childCanSelfWithdraw: false,
-    canManagePermissionProfiles: true,
-    canStartDirectChat: true,
-    canStartGroupChat: true,
-    canUseChat: true,
-    canManageSubstitutions: true,
-    canViewStatistics: true,
-    canExportReports: true,
-  },
-  teacher: {
-    canManageUsers: false,
-    canManageGroups: false,
-    canManageSchedule: true,
-    canManageSettings: false,
-    canManageSystemMessages: false,
-    canViewSystemTab: false,
-    canViewChildEmail: false,
-    canGenerateRegistrationCodes: false,
-    canActAsParentForChild: false,
-    childCanSelfWithdraw: false,
-    canManagePermissionProfiles: false,
-    canStartDirectChat: true,
-    canStartGroupChat: true,
-    canUseChat: true,
-    canManageSubstitutions: true,
-    canViewStatistics: false,
-    canExportReports: false,
-  },
-  parent: {
-    canManageUsers: false,
-    canManageGroups: false,
-    canManageSchedule: false,
-    canManageSettings: false,
-    canManageSystemMessages: false,
-    canViewSystemTab: false,
-    canViewChildEmail: false,
-    canGenerateRegistrationCodes: false,
-    canActAsParentForChild: true,
-    childCanSelfWithdraw: false,
-    canManagePermissionProfiles: false,
-    canStartDirectChat: true,
-    canStartGroupChat: false,
-    canUseChat: true,
-    canManageSubstitutions: false,
-    canViewStatistics: false,
-    canExportReports: false,
-  },
-  member: {
-    canManageUsers: false,
-    canManageGroups: false,
-    canManageSchedule: false,
-    canManageSettings: false,
-    canManageSystemMessages: false,
-    canViewSystemTab: false,
-    canViewChildEmail: false,
-    canGenerateRegistrationCodes: false,
-    canActAsParentForChild: false,
-    childCanSelfWithdraw: true,
-    canManagePermissionProfiles: false,
-    canStartDirectChat: true,
-    canStartGroupChat: false,
-    canUseChat: true,
-    canManageSubstitutions: false,
-    canViewStatistics: false,
-    canExportReports: false,
-  },
+  suad: defaults(suadGrants),
+  admin: defaults(adminGrants),
+  coordinator: defaults(coordinatorGrants),
+  teacher: defaults(teacherGrants),
+  parent: defaults(parentGrants),
+  member: defaults(memberGrants),
 };
 
 export async function resolvePermission(

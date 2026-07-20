@@ -2,11 +2,11 @@
   "name": "anwesenheit-neo-onprem",
   "version": "0.1.0",
   "description": "Self-hostbares Anwesenheitssystem ohne Firebase",
-  "main": "dist/server.js",
+  "main": "dist/src/server.js",
   "scripts": {
     "dev": "ts-node-dev --respawn src/server.ts",
     "build": "tsc",
-    "start": "node dist/server.js",
+    "start": "node dist/src/server.js",
     "db:migrate": "prisma migrate deploy",
     "db:studio": "prisma studio",
     "setup:suad": "ts-node scripts/setup-suad.ts"
