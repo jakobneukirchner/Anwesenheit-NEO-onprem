@@ -29,8 +29,13 @@ kein spezifisches Recht.
 | PATCH | `/users/:id` | Nutzer bearbeiten | `canManageUsers` |
 | DELETE | `/users/:id` | Nutzer löschen | `canManageUsers` |
 | GET | `/users/:id/permissions` | Aufgelöste Rechte des Nutzers | `canManageUsers` |
+| GET | `/users/:id/permission-overrides` | Direkte Personen-Overrides (roh) | `canManagePermissionProfiles` |
+| PUT | `/users/:id/permissions` | Personen-Overrides setzen (Rechte/Profile) | `canManagePermissionProfiles` |
 | POST | `/users/:id/parent-links` | Eltern-Kind-Verknüpfung anlegen | `canManageUsers` |
 | DELETE | `/users/:id/parent-links/:parentId` | Verknüpfung entfernen | `canManageUsers` |
+
+`PUT /users/:id/permissions` ersetzt alle direkten Overrides des Nutzers (höchste Priorität
+vor Gruppe/Rolle). `canViewChildEmail` wird serverseitig abgelehnt.
 
 ---
 
@@ -95,11 +100,14 @@ Der Modus des Termins (`open`/`request`/`closed`) sowie An-/Abmeldefristen werde
 
 | Methode | Pfad | Beschreibung | Recht |
 |---|---|---|---|
-| GET | `/messages` | Nachrichten (gefiltert nach Zielgruppe) | [AUTH] |
-| POST | `/messages` | Nachricht erstellen | `canManageSystemMessages` |
-| PATCH | `/messages/:id` | Nachricht bearbeiten | `canManageSystemMessages` |
+| GET | `/messages` | Nachrichten (Zielgruppe + Gültigkeitszeitraum gefiltert) | [AUTH] |
+| GET | `/messages/manage` | Alle Nachrichten (Verwaltung, entschlüsselt) | `canManageSystemMessages` |
+| POST | `/messages` | Nachricht erstellen (`validFrom`/`validUntil` optional) | `canManageSystemMessages` |
+| PATCH | `/messages/:id` | Nachricht bearbeiten (inkl. Gültigkeit) | `canManageSystemMessages` |
 | DELETE | `/messages/:id` | Nachricht löschen | `canManageSystemMessages` |
 | POST | `/messages/:id/dismiss` | Ausblenden für aktuellen Nutzer | [AUTH] |
+
+`GET /messages` blendet Nachrichten außerhalb von `validFrom`…`validUntil` sowie inaktive aus.
 
 ---
 
@@ -130,6 +138,7 @@ WebSocket-Events (Socket.IO, JWT-Cookie-Auth beim Handshake):
 | PATCH | `/permission-profiles/:id` | Profil bearbeiten | `canManagePermissionProfiles` |
 | DELETE | `/permission-profiles/:id` | Profil löschen | `canManagePermissionProfiles` |
 | POST | `/permission-profiles/:id/assign` | Profil an Gruppe/Person zuweisen | `canManagePermissionProfiles` |
+| POST | `/permission-profiles/:id/unassign` | Profilzuweisung von Gruppe/Person entfernen | `canManagePermissionProfiles` |
 
 `canViewChildEmail` wird bei Profil-Erstellung/-Bearbeitung serverseitig abgelehnt.
 
@@ -177,7 +186,7 @@ Das dynamische Manifest ist zusätzlich unter dem Root-Pfad `GET /manifest.json`
 |---|---|---|---|
 | GET | `/statistics/overview` | Kennzahlen | `canViewStatistics` |
 | GET | `/statistics/attendance` | Anwesenheitsquoten je Status | `canViewStatistics` |
-| GET | `/reports/export` | CSV-Export der Anwesenheiten (`?groupId=`) | `canExportReports` |
+| GET | `/reports/export` | Export der Anwesenheiten (`?groupId=`, `?format=csv\|json`) | `canExportReports` |
 
 ---
 

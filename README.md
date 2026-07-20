@@ -31,10 +31,13 @@ copy .env.example .env
 # .env anpassen: JWT_SECRET und ENCRYPTION_KEY (64 Hex-Zeichen) unbedingt setzen
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"   # ENCRYPTION_KEY erzeugen
 npx prisma generate
-npx prisma db push          # Schema in die Datenbank schreiben (erstes Setup)
+npm run setup               # Schema pushen + interaktiv ersten SuAd anlegen
 npm run build
 npm start
 ```
+
+`npm run setup` kombiniert `prisma db push` mit dem SuAd-Setup. Für Test-/Demodaten
+steht zusätzlich `npm run seed` bereit.
 
 ### Ersten SuAd anlegen (Bootstrap)
 
@@ -57,7 +60,13 @@ pm2-startup install
 
 ### Als Windows-Dienst (node-windows)
 
-Siehe `scripts/install-service.ts`.
+```powershell
+npm run service:install     # Dienst „Anwesenheit-NEO" registrieren und starten
+npm run service:uninstall   # Dienst wieder entfernen
+```
+
+Das Skript `scripts/windows-service.js` nutzt `node-windows` und startet
+`dist/src/server.js` automatisch beim Windows-Boot.
 
 ### Umgebungsvariablen (.env)
 
