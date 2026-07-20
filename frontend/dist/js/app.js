@@ -44,9 +44,15 @@
     catch (e) { return iso; }
   }
 
+  var openDialogs = [];
+  function closeAllDialogs() { openDialogs.slice().forEach(function (c) { c(); }); }
   function dialog(title, contentNodes, actions) {
     var scrim = h('div', { class: 'dialog-scrim' });
-    function close() { if (scrim.parentNode) scrim.parentNode.removeChild(scrim); }
+    function close() {
+      if (scrim.parentNode) scrim.parentNode.removeChild(scrim);
+      var i = openDialogs.indexOf(close);
+      if (i >= 0) openDialogs.splice(i, 1);
+    }
     scrim.addEventListener('click', function (e) { if (e.target === scrim) close(); });
     var d = h('div', { class: 'dialog' }, [h('h2', {}, [title])]);
     contentNodes.forEach(function (n) { d.appendChild(n); });
@@ -55,8 +61,15 @@
     d.appendChild(act);
     scrim.appendChild(d);
     document.body.appendChild(scrim);
+    openDialogs.push(close);
     return { close: close, el: d };
   }
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && openDialogs.length) {
+      e.preventDefault();
+      openDialogs[openDialogs.length - 1]();
+    }
+  });
 
   // ---------------------------------------------------------------------------
   // Branding / Theme
@@ -93,8 +106,8 @@
     ]);
 
     var tabs = h('div', { class: 'auth-tabs' }, [
-      h('button', { class: tab === 'login' ? 'active' : '', onclick: function () { renderAuth('login'); } }, ['Anmelden']),
-      h('button', { class: tab === 'register' ? 'active' : '', onclick: function () { renderAuth('register'); } }, ['Registrieren']),
+      h('button', { class: tab === 'login' ? 'active' : '', onclick: function () { if (tab !== 'login') renderAuth('login'); } }, ['Anmelden']),
+      h('button', { class: tab === 'register' ? 'active' : '', onclick: function () { if (tab !== 'register') renderAuth('register'); } }, ['Registrieren']),
     ]);
 
     var form = tab === 'login' ? loginForm() : registerForm();
@@ -209,6 +222,7 @@
   }
 
   function navigate(view) {
+    closeAllDialogs();
     currentView = view;
     location.hash = '#/' + view;
     renderShell();
@@ -309,7 +323,7 @@
     clear(node);
     var canManage = ['admin', 'coordinator', 'teacher', 'suad'].indexOf(state.me.role) >= 0;
     var actions = [];
-    if (canManage) actions.push(h('button', { class: 'btn', onclick: eventDialog }, [icon('add'), 'Termin']));
+    if (canManage) actions.push(h('button', { class: 'btn', onclick: function () { eventDialog(); } }, [icon('add'), 'Termin']));
     node.appendChild(sectionHead('Termine', actions));
     loading(node);
     API.get('/events').then(function (events) {
@@ -394,8 +408,17 @@
     return new Date(dt.getTime() - off).toISOString().slice(0, 16);
   }
 
+  // Tage zwischen zwei Terminen einer Serie, passend zur Backend-Logik.
+  function rruleIntervalDays(rrule) {
+    if (!rrule) return 0;
+    var m = /INTERVAL=(\d+)/i.exec(rrule);
+    var mult = m ? parseInt(m[1], 10) : 1;
+    var base = /WEEKLY/i.test(rrule) ? 7 : /MONTHLY/i.test(rrule) ? 30 : 1;
+    return base * mult;
+  }
+
   function eventDialog(ev) {
-    var editing = !!ev;
+    var editing = !!(ev && ev.id);
     var title = fieldInput('Titel', 'title', 'text', editing ? ev.title : '');
     var start = fieldInput('Beginn', 'startAt', 'datetime-local', editing ? toLocalInput(ev.startAt) : '');
     var end = fieldInput('Ende', 'endAt', 'datetime-local', editing ? toLocalInput(ev.endAt) : '');
@@ -406,7 +429,15 @@
       h('option', { value: 'request', selected: editing && ev.mode === 'request' ? 'selected' : null }, ['Auf Anfrage']),
       h('option', { value: 'closed', selected: editing && ev.mode === 'closed' ? 'selected' : null }, ['Geschlossen']),
     ]);
-    var group = fieldInput('Gruppen-ID', 'groupId', 'text', editing ? ev.groupId : '');
+    // Pflicht-Gruppenauswahl, befüllt aus GET /api/groups.
+    var groupSel = h('select', { name: 'groupId' }, [h('option', { value: '' }, ['Gruppe wählen…'])]);
+    API.get('/groups').then(function (groups) {
+      (groups || []).forEach(function (g) {
+        var opt = h('option', { value: g.id }, [g.name]);
+        if (editing && ev.groupId === g.id) opt.setAttribute('selected', 'selected');
+        groupSel.appendChild(opt);
+      });
+    }).catch(function () { err.textContent = 'Gruppen konnten nicht geladen werden.'; });
     var signup = fieldInput('Anmeldefrist (optional)', 'signupDeadline', 'datetime-local', editing ? toLocalInput(ev.signupDeadline) : '');
     var withdraw = fieldInput('Abmeldefrist (optional)', 'withdrawDeadline', 'datetime-local', editing ? toLocalInput(ev.withdrawDeadline) : '');
     var confWin = fieldInput('Bestätigungsfenster (Min. vor Beginn, optional)', 'confirmationWindowMinutes', 'number', editing && ev.confirmationWindowMinutes != null ? String(ev.confirmationWindowMinutes) : '');
@@ -415,9 +446,11 @@
       h('option', { value: '' }, ['Einzeltermin']),
       h('option', { value: 'FREQ=DAILY' }, ['Täglich']),
       h('option', { value: 'FREQ=WEEKLY' }, ['Wöchentlich']),
+      h('option', { value: 'FREQ=WEEKLY;INTERVAL=2' }, ['14-tägig']),
       h('option', { value: 'FREQ=MONTHLY' }, ['Monatlich']),
     ]);
     var count = fieldInput('Anzahl Termine (Serie)', 'count', 'number', '1');
+    var endDate = fieldInput('Serienende bis (optional, statt Anzahl)', 'seriesEnd', 'datetime-local', '');
     var err = h('div', { class: 'error-text' });
     var d;
 
@@ -429,7 +462,7 @@
         location: loc.input.value.trim() || undefined,
         description: descWrap.querySelector('textarea').value.trim() || undefined,
         mode: modeSel.value,
-        groupId: group.input.value.trim(),
+        groupId: groupSel.value,
         signupDeadline: signup.input.value ? new Date(signup.input.value).toISOString() : undefined,
         withdrawDeadline: withdraw.input.value ? new Date(withdraw.input.value).toISOString() : undefined,
         confirmationWindowMinutes: confWin.input.value ? parseInt(confWin.input.value, 10) : undefined,
@@ -439,6 +472,10 @@
     var save = h('button', { class: 'btn' }, [icon('save'), 'Speichern']);
     save.addEventListener('click', function () {
       err.textContent = '';
+      if (!title.input.value.trim() || !start.input.value || !end.input.value) {
+        err.textContent = 'Titel, Beginn und Ende sind erforderlich.'; return;
+      }
+      if (!groupSel.value) { err.textContent = 'Bitte eine Gruppe wählen.'; return; }
       if (editing) {
         askScope(ev, function (scope) {
           API.patch('/events/' + ev.id + '?scope=' + scope, payload())
@@ -447,7 +484,18 @@
         });
       } else {
         var body = payload();
-        if (rruleSel.value) { body.rrule = rruleSel.value; body.count = parseInt(count.input.value, 10) || 1; }
+        if (rruleSel.value) {
+          body.rrule = rruleSel.value;
+          var cnt = parseInt(count.input.value, 10) || 1;
+          if (endDate.input.value) {
+            var days = rruleIntervalDays(rruleSel.value);
+            if (days > 0) {
+              var span = Math.floor((new Date(endDate.input.value).getTime() - new Date(start.input.value).getTime()) / (days * 86400000));
+              cnt = Math.max(1, span + 1);
+            }
+          }
+          body.count = cnt;
+        }
         API.post('/events', body).then(function () { d.close(); snack('Termin erstellt'); navigate('events'); })
           .catch(function (ex) { err.textContent = ex.message; });
       }
@@ -455,11 +503,12 @@
     var fields = [
       title.wrap, start.wrap, end.wrap, loc.wrap, descWrap,
       h('div', { class: 'field' }, [h('label', {}, ['Modus']), modeSel]),
-      group.wrap, signup.wrap, withdraw.wrap, confWin.wrap,
+      h('div', { class: 'field' }, [h('label', {}, ['Gruppe']), groupSel]),
+      signup.wrap, withdraw.wrap, confWin.wrap,
     ];
-    if (!editing) fields.push(h('div', { class: 'field' }, [h('label', {}, ['Wiederholung']), rruleSel]), count.wrap);
+    if (!editing) fields.push(h('div', { class: 'field' }, [h('label', {}, ['Wiederholung']), rruleSel]), count.wrap, endDate.wrap);
     fields.push(err);
-    d = dialog(editing ? 'Termin bearbeiten' : 'Neuer Termin', fields,
+    d = dialog(editing ? 'Termin bearbeiten' : 'Termin erstellen', fields,
       [h('button', { class: 'btn text', onclick: function () { d.close(); } }, ['Abbrechen']), save]);
   }
 
@@ -1214,5 +1263,5 @@
     window.addEventListener('load', function () { navigator.serviceWorker.register('/sw.js').catch(function () {}); });
   }
 
-  boot();
+  boot().catch(function () { renderAuth('login'); });
 })();
