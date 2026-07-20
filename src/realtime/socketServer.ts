@@ -1,6 +1,16 @@
 import { Server as SocketIOServer } from 'socket.io';
 import type { Server as HttpServer } from 'http';
 import jwt from 'jsonwebtoken';
+import { prisma } from '../db/client';
+import { packField } from '../utils/crypto';
+import { resolvePermission } from '../utils/permissions';
+
+async function isParticipant(roomId: string, userId: string): Promise<boolean> {
+  const p = await prisma.chatParticipant.findUnique({
+    where: { roomId_userId: { roomId, userId } },
+  });
+  return !!p;
+}
 
 let io: SocketIOServer;
 
@@ -36,20 +46,36 @@ export function initSocketServer(httpServer: HttpServer): SocketIOServer {
   io.on('connection', (socket) => {
     const { userId } = socket.data;
 
-    socket.on('chat:join', (roomId: string) => {
-      socket.join(`room:${roomId}`);
+    socket.on('chat:join', async (roomId: string) => {
+      if (await isParticipant(roomId, userId)) socket.join(`room:${roomId}`);
     });
 
     socket.on('chat:message', async (data: { roomId: string; body: string }) => {
+      const body = typeof data?.body === 'string' ? data.body.trim() : '';
+      if (!data?.roomId || !body) return;
+      if (!(await resolvePermission(userId, 'canUseChat'))) return;
+      if (!(await isParticipant(data.roomId, userId))) return;
+
+      const bodyEnc = await packField(body);
+      if (!bodyEnc) return;
+      const message = await prisma.chatMessage.create({
+        data: { roomId: data.roomId, senderId: userId, bodyEnc },
+        include: { sender: { select: { id: true, name: true } } },
+      });
+
       io.to(`room:${data.roomId}`).emit('chat:message', {
+        id: message.id,
         senderId: userId,
+        senderName: message.sender.name,
         roomId: data.roomId,
-        body: data.body,
-        createdAt: new Date(),
+        body,
+        createdAt: message.createdAt,
       });
     });
 
-    socket.on('chat:typing', (data: { roomId: string }) => {
+    socket.on('chat:typing', async (data: { roomId: string }) => {
+      if (!data?.roomId) return;
+      if (!(await isParticipant(data.roomId, userId))) return;
       socket.to(`room:${data.roomId}`).emit('chat:typing', { userId });
     });
 
