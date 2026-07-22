@@ -146,12 +146,51 @@ body {
 .chip.selected { background: var(--md-primary-container); color: var(--md-on-primary-container); border-color: transparent; }
 .chip.status-registered { background: #d4edda; color: #155724; border-color: #c3e6cb; }
 .chip.status-confirmed { background: #b6f0cf; color: #06210f; border-color: #9bd4b0; }
-.chip.status-requested { background: var(--md-warning-container); color: var(--md-warning); border-color: transparent; }
-.chip.status-withdrawn, .chip.status-cancelled { background: #f8d7da; color: #721c24; border-color: #f5c6cb; }
+.chip.status-present { background: #cce5ff; color: #004085; border-color: #b8daff; }
+.chip.status-pending { background: var(--md-warning-container); color: var(--md-warning); border-color: transparent; }
+.chip.status-absent, .chip.status-cancelled { background: #f8d7da; color: #721c24; border-color: #f5c6cb; }
 [data-theme='dark'] .chip.status-registered { background: #1b4332; color: #95d5b2; border-color: #2d6a4f; }
 [data-theme='dark'] .chip.status-confirmed { background: #16513a; color: #b6f0cf; border-color: #1b6e2d; }
-[data-theme='dark'] .chip.status-requested { background: #5c4200; color: #f5bf48; border-color: transparent; }
-[data-theme='dark'] .chip.status-withdrawn, [data-theme='dark'] .chip.status-cancelled { background: #5c1a1a; color: #f8a0a0; border-color: #7a2e2e; }
+[data-theme='dark'] .chip.status-present { background: #1a3a5c; color: #8cb8e0; border-color: #2a5a8c; }
+[data-theme='dark'] .chip.status-pending { background: #5c4200; color: #f5bf48; border-color: transparent; }
+[data-theme='dark'] .chip.status-absent, [data-theme='dark'] .chip.status-cancelled { background: #5c1a1a; color: #f8a0a0; border-color: #7a2e2e; }
+
+/* ---------- Event type badges ---------- */
+.event-type-badge {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;
+  padding: 2px 10px; border-radius: 4px;
+}
+.event-type-training { background: var(--md-primary-container); color: var(--md-on-primary-container); }
+.event-type-match { background: #e3f2fd; color: #1565c0; }
+.event-type-event { background: #f3e5f5; color: #7b1fa2; }
+.event-type-other { background: var(--md-surface-container-high); color: var(--md-on-surface-variant); }
+[data-theme='dark'] .event-type-match { background: #1a3a5c; color: #8cb8e0; }
+[data-theme='dark'] .event-type-event { background: #4a1a5e; color: #ce93d8; }
+
+/* ---------- Participant list (Trainer view) ---------- */
+.participant-list { list-style: none; padding: 0; margin: 0; }
+.participant-row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 0; border-bottom: 1px solid var(--md-outline-variant);
+}
+.participant-row:last-child { border-bottom: none; }
+.participant-name { flex: 1; font-weight: 500; }
+.participant-note { font-size: 12px; color: var(--md-on-surface-variant); font-style: italic; }
+.check-in-cb {
+  width: 22px; height: 22px; accent-color: var(--md-primary);
+  cursor: pointer;
+}
+.attendance-summary {
+  display: flex; gap: 16px; flex-wrap: wrap; padding: 12px 0;
+  border-bottom: 1px solid var(--md-outline-variant); margin-bottom: 8px;
+}
+.attendance-summary-item {
+  display: flex; align-items: center; gap: 6px; font-size: 13px;
+}
+.attendance-summary-item .count {
+  font-weight: 700; font-size: 18px; line-height: 1;
+}
 
 /* ---------- Badges / Counts ---------- */
 .badge-count {

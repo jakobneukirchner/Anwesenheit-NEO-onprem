@@ -1,5 +1,6 @@
 /**
- * Cronjob: Unbestätigte Anfragen nach Bestätigungsfenster automatisch absagen.
+ * Cronjob: Im Bestätigungs-Modus ausstehende Bestätigungen nach Fristablauf
+ * automatisch auf 'cancelled' setzen.
  * Standard: alle 5 Minuten.
  */
 
@@ -12,10 +13,11 @@ export function startAutoCancelJob(): void {
   cron.schedule(schedule, async () => {
     const now = new Date();
 
-    // Alle Events mit Bestätigungsfenster, die in der Vergangenheit liegen
+    // Alle Events im confirmation-Modus mit Bestätigungsfenster
     const expiredEvents = await prisma.event.findMany({
       where: {
         isCancelled: false,
+        mode: 'confirmation',
         startAt: { lt: now },
         confirmationWindowMinutes: { not: null },
       },
@@ -27,8 +29,9 @@ export function startAutoCancelJob(): void {
       );
 
       if (now >= deadline) {
+        // pending → cancelled (Bestätigungsfrist abgelaufen)
         await prisma.attendanceRecord.updateMany({
-          where: { eventId: event.id, status: 'requested' },
+          where: { eventId: event.id, status: 'pending' },
           data: { status: 'cancelled' },
         });
       }

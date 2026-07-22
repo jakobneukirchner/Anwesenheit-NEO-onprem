@@ -10,14 +10,40 @@ import attendanceRouter from './attendance';
 const router = Router();
 router.use(authenticate);
 
-// GET /events?groupId=&from=&to=&mode=
+/** Erzeugt Attendance-Records für alle Gruppenmitglieder basierend auf dem Modus. */
+async function createAttendanceForGroup(eventId: string, groupId: string, mode: string): Promise<void> {
+  const memberships = await prisma.groupMembership.findMany({
+    where: { groupId },
+    select: { userId: true },
+  });
+  if (memberships.length === 0) return;
+
+  let defaultStatus: string;
+  switch (mode) {
+    case 'signup':       defaultStatus = 'absent'; break;
+    case 'confirmation': defaultStatus = 'pending'; break;
+    case 'signoff':
+    default:             defaultStatus = 'registered'; break;
+  }
+
+  for (const m of memberships) {
+    await prisma.attendanceRecord.upsert({
+      where: { eventId_userId: { eventId, userId: m.userId } },
+      update: {},
+      create: { eventId, userId: m.userId, status: defaultStatus },
+    });
+  }
+}
+
+// GET /events?groupId=&from=&to=&mode=&eventType=
 router.get(
   '/',
   asyncHandler(async (req, res) => {
-    const { groupId, from, to, mode } = req.query as Record<string, string | undefined>;
+    const { groupId, from, to, mode, eventType } = req.query as Record<string, string | undefined>;
     const where: Record<string, unknown> = {};
     if (groupId) where.groupId = groupId;
     if (mode) where.mode = mode;
+    if (eventType) where.eventType = eventType;
     if (from || to) {
       where.startAt = {};
       if (from) (where.startAt as Record<string, Date>).gte = new Date(from);
@@ -52,9 +78,10 @@ router.get(
         ...s,
         groupName: ev.group.name,
         groupColor: ev.group.color,
+        totalMembers: ev.attendanceRecords.length,
         myAttendance: myRec ? myRec.status : null,
         attendanceCounts: counts,
-        totalRegistered: (counts.registered || 0) + (counts.confirmed || 0) + (counts.requested || 0),
+        totalRegistered: (counts.registered || 0) + (counts.confirmed || 0) + (counts.present || 0),
       };
     });
     res.json(result);
@@ -66,10 +93,15 @@ router.post(
   '/',
   requirePermission('canManageSchedule'),
   asyncHandler(async (req, res) => {
-    const { title, groupId, startAt, endAt, mode } = req.body as Record<string, string>;
+    const { title, groupId, startAt, endAt, mode, eventType } = req.body as Record<string, string>;
     if (!title || !groupId || !startAt || !endAt) {
       throw new HttpError(400, 'title, groupId, startAt, endAt erforderlich');
     }
+    const validModes = ['signup', 'signoff', 'confirmation'];
+    const eventMode = validModes.includes(mode) ? mode : 'signoff';
+    const validTypes = ['training', 'match', 'event', 'other'];
+    const type = validTypes.includes(eventType) ? eventType : 'training';
+
     const [descriptionEnc, locationEnc] = await Promise.all([
       packField(req.body.description),
       packField(req.body.location),
@@ -79,7 +111,8 @@ router.post(
       groupId,
       descriptionEnc,
       locationEnc,
-      mode: mode ?? 'open',
+      mode: eventMode,
+      eventType: type,
       signupDeadline: req.body.signupDeadline ? new Date(req.body.signupDeadline) : null,
       withdrawDeadline: req.body.withdrawDeadline ? new Date(req.body.withdrawDeadline) : null,
       confirmationWindowMinutes: req.body.confirmationWindowMinutes ?? null,
@@ -110,6 +143,8 @@ router.post(
             endAt: new Date(end.getTime() + offset),
           },
         })) as unknown as EventLike;
+        // Auto-Attendance für Gruppenmitglieder
+        await createAttendanceForGroup(ev.id, groupId, eventMode);
         created.push(await serializeEvent(ev));
       }
       res.status(201).json({ seriesId: series.id, events: created });
@@ -119,6 +154,8 @@ router.post(
     const ev = (await prisma.event.create({
       data: { ...base, startAt: start, endAt: end },
     })) as unknown as EventLike;
+    // Auto-Attendance für Gruppenmitglieder
+    await createAttendanceForGroup(ev.id, groupId, eventMode);
     res.status(201).json(await serializeEvent(ev));
   }),
 );
@@ -165,6 +202,7 @@ router.patch(
     if ('description' in req.body) data.descriptionEnc = await packField(req.body.description);
     if ('location' in req.body) data.locationEnc = await packField(req.body.location);
     if (typeof req.body.mode === 'string') data.mode = req.body.mode;
+    if (typeof req.body.eventType === 'string') data.eventType = req.body.eventType;
     if (req.body.signupDeadline !== undefined)
       data.signupDeadline = req.body.signupDeadline ? new Date(req.body.signupDeadline) : null;
     if (req.body.withdrawDeadline !== undefined)

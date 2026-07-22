@@ -1,5 +1,5 @@
 /* Service Worker – App-Shell netzwerk-first (Updates sofort), Offline-Fallback aus Cache. */
-var CACHE = 'anwesenheit-neo-v3';
+var CACHE = 'anwesenheit-neo-v4';
 var SHELL = ['/', '/index.html', '/css/app.css', '/js/api.js', '/js/app.js'];
 
 self.addEventListener('install', function (e) {

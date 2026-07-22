@@ -130,7 +130,8 @@ model Event {
   seriesId                  String?
   startAt                   DateTime
   endAt                     DateTime
-  mode                      String    @default("open") // open | request | closed
+  mode                      String    @default("signoff") // signup | signoff | confirmation
+  eventType                 String    @default("training") // training | match | event | other
   isCancelled               Boolean   @default(false)
   signupDeadline            DateTime?
   withdrawDeadline          DateTime?
@@ -156,7 +157,7 @@ model AttendanceRecord {
   id           String   @id @default(uuid())
   eventId      String
   userId       String
-  status       String // registered | requested | confirmed | cancelled | withdrawn
+  status       String // registered | absent | pending | confirmed | cancelled | present
   registeredBy String? // userId des Elternteils, falls Elternteil einträgt
   noteEnc      String? // AES-256-GCM (JSON: ciphertext/iv/tag/keyVersion)
   createdAt    DateTime @default(now())

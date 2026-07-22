@@ -11,6 +11,7 @@ export interface EventLike {
   startAt: Date;
   endAt: Date;
   mode: string;
+  eventType: string;
   isCancelled: boolean;
   signupDeadline: Date | null;
   withdrawDeadline: Date | null;
@@ -37,6 +38,7 @@ export async function serializeEvent(e: EventLike): Promise<Record<string, unkno
     startAt: e.startAt,
     endAt: e.endAt,
     mode: e.mode,
+    eventType: e.eventType,
     isCancelled: e.isCancelled,
     signupDeadline: e.signupDeadline,
     withdrawDeadline: e.withdrawDeadline,
