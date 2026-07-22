@@ -44,6 +44,51 @@
     catch (e) { return iso; }
   }
 
+  /** User-friendly relative date like "Heute, 14:00" / "Morgen, 09:30" */
+  function fmtDateFriendly(iso) {
+    if (!iso) return '';
+    try {
+      var d = new Date(iso);
+      var now = new Date();
+      var today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      var target = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+      var diff = Math.round((target - today) / 86400000);
+      var time = d.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+      if (diff === 0) return 'Heute, ' + time;
+      if (diff === 1) return 'Morgen, ' + time;
+      if (diff === -1) return 'Gestern, ' + time;
+      if (diff > 1 && diff <= 6) return ['So','Mo','Di','Mi','Do','Fr','Sa'][d.getDay()] + ', ' + time;
+      return d.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' }) + ', ' + time;
+    } catch (e) { return iso; }
+  }
+
+  /** Time range like "14:00 – 16:00" */
+  function fmtTimeRange(startIso, endIso) {
+    if (!startIso || !endIso) return fmtDateFriendly(startIso);
+    try {
+      var s = new Date(startIso);
+      var e = new Date(endIso);
+      var sameDay = s.toDateString() === e.toDateString();
+      var startTime = s.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+      var endTime = e.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+      return fmtDateFriendly(startIso) + ' – ' + (sameDay ? endTime : fmtDateFriendly(endIso));
+    } catch (e) { return fmtDateFriendly(startIso); }
+  }
+
+  /** "noch 2 Tage" / "in 3 Stunden" / "abgelaufen" */
+  function fmtDeadline(iso) {
+    if (!iso) return null;
+    var d = new Date(iso);
+    var now = new Date();
+    var diff = d.getTime() - now.getTime();
+    if (diff < 0) return { text: 'abgelaufen', warn: true };
+    var hours = Math.floor(diff / 3600000);
+    if (hours < 1) return { text: 'in < 1 Std.', warn: true };
+    if (hours < 24) return { text: 'noch ' + hours + ' Std.', warn: hours < 3 };
+    var days = Math.floor(hours / 24);
+    return { text: 'noch ' + days + ' Tag' + (days > 1 ? 'e' : ''), warn: false };
+  }
+
   var openDialogs = [];
   function closeAllDialogs() { openDialogs.slice().forEach(function (c) { c(); }); }
   function dialog(title, contentNodes, actions) {
@@ -55,7 +100,7 @@
     }
     scrim.addEventListener('click', function (e) { if (e.target === scrim) close(); });
     var d = h('div', { class: 'dialog' }, [h('h2', {}, [title])]);
-    contentNodes.forEach(function (n) { d.appendChild(n); });
+    contentNodes.forEach(function (n) { if (n) d.appendChild(n); });
     var act = h('div', { class: 'dialog-actions' });
     (actions || []).forEach(function (a) { act.appendChild(a); });
     d.appendChild(act);
@@ -70,6 +115,45 @@
       openDialogs[openDialogs.length - 1]();
     }
   });
+
+  // ---------------------------------------------------------------------------
+  // Skeleton Loader
+  // ---------------------------------------------------------------------------
+  function skeletonCards(node, count) {
+    clear(node);
+    var grid = h('div', { class: 'grid' });
+    for (var i = 0; i < (count || 3); i++) {
+      grid.appendChild(h('div', { class: 'skeleton skeleton-card' }));
+    }
+    node.appendChild(grid);
+  }
+  function skeletonList(node, count) {
+    clear(node);
+    var stack = h('div', { class: 'stack' });
+    for (var i = 0; i < (count || 4); i++) {
+      var c = h('div', { class: 'card' }, [
+        h('div', { class: 'skeleton skeleton-line', style: 'width:' + (50 + Math.random() * 30) + '%' }),
+        h('div', { class: 'skeleton skeleton-line short' }),
+      ]);
+      stack.appendChild(c);
+    }
+    node.appendChild(stack);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Attendance status helpers
+  // ---------------------------------------------------------------------------
+  var STATUS_LABELS = {
+    registered: 'Angemeldet',
+    confirmed: 'Bestätigt',
+    requested: 'Angefragt',
+    withdrawn: 'Abgemeldet',
+    cancelled: 'Abgesagt',
+  };
+  function statusChip(status) {
+    if (!status) return h('span', { class: 'chip' }, ['Nicht angemeldet']);
+    return h('span', { class: 'chip status-' + status }, [STATUS_LABELS[status] || status]);
+  }
 
   // ---------------------------------------------------------------------------
   // Branding / Theme
@@ -225,14 +309,23 @@
     closeAllDialogs();
     currentView = view;
     location.hash = '#/' + view;
-    renderShell();
+    // Only re-render content area, not entire shell, for smoother transitions
+    var node = viewNode();
+    if (node) {
+      node.style.animation = 'none';
+      // force reflow
+      void node.offsetHeight;
+      node.style.animation = '';
+      renderView();
+    } else {
+      renderShell();
+    }
   }
 
   function viewNode() { return document.getElementById('view'); }
 
   function loading(node) {
-    clear(node);
-    node.appendChild(h('div', { class: 'empty' }, [icon('hourglass_empty'), h('div', {}, ['Laden…'])]));
+    skeletonList(node, 3);
   }
   function showError(node, ex) {
     clear(node);
@@ -248,6 +341,14 @@
     return head;
   }
 
+  function emptyState(iconName, message, hint) {
+    return h('div', { class: 'empty' }, [
+      icon(iconName),
+      h('div', {}, [message]),
+      hint ? h('div', { class: 'empty-hint' }, [hint]) : null,
+    ]);
+  }
+
   function renderView() {
     var node = viewNode();
     var map = {
@@ -260,60 +361,167 @@
   }
 
   // ---------------------------------------------------------------------------
-  // Dashboard
+  // Dashboard (komplett überarbeitet)
   // ---------------------------------------------------------------------------
   function viewDashboard(node) {
     clear(node);
-    node.appendChild(sectionHead('Willkommen, ' + esc(state.me.name)));
-    loading(node);
-    API.get('/events?from=' + encodeURIComponent(new Date().toISOString())).then(function (events) {
-      clear(node);
-      node.appendChild(sectionHead('Willkommen, ' + esc(state.me.name)));
+    var me = state.me;
+
+    // Greeting
+    var hour = new Date().getHours();
+    var greeting = hour < 12 ? 'Guten Morgen' : hour < 18 ? 'Guten Tag' : 'Guten Abend';
+    node.appendChild(h('div', { class: 'dash-welcome' }, [greeting + ', ' + esc(me.name)]));
+    node.appendChild(h('div', { class: 'dash-subtitle' }, [
+      'Rolle: ',
+      h('span', { class: 'chip' }, [me.role]),
+    ]));
+
+    skeletonCards(node, 4);
+
+    // Load data in parallel
+    Promise.all([
+      API.get('/events?from=' + encodeURIComponent(new Date().toISOString())).catch(function () { return []; }),
+      API.get('/messages').catch(function () { return []; }),
+    ]).then(function (r) {
+      var events = r[0] || [];
+      var messages = r[1] || [];
+
+      // Keep heading, remove skeletons
+      while (node.children.length > 2) node.removeChild(node.lastChild);
+
       var grid = h('div', { class: 'grid' });
 
-      var upcoming = (events || []).slice(0, 5);
-      var evCard = h('div', { class: 'card' }, [h('h3', {}, ['Nächste Termine'])]);
-      if (!upcoming.length) evCard.appendChild(h('div', { class: 'muted' }, ['Keine anstehenden Termine.']));
+      // -- My next events with attendance status --
+      var evCard = h('div', { class: 'card' }, [
+        h('div', { class: 'row' }, [icon('calendar_month'), h('h3', { style: 'flex:1;margin:0' }, ['Nächste Termine'])]),
+      ]);
+      var upcoming = events.slice(0, 5);
+      if (!upcoming.length) {
+        evCard.appendChild(h('div', { class: 'muted', style: 'padding:16px 0' }, ['Keine anstehenden Termine.']));
+      }
       upcoming.forEach(function (ev) {
-        evCard.appendChild(h('div', { class: 'row', style: 'padding:6px 0;border-bottom:1px solid var(--md-outline-variant)' }, [
-          icon('event'), h('div', {}, [h('div', {}, [esc(ev.title)]), h('div', { class: 'muted' }, [fmtDate(ev.startAt)])]),
-        ]));
+        var statusEl = statusChip(ev.myAttendance);
+        var eventRow = h('div', { style: 'padding:10px 0;border-bottom:1px solid var(--md-outline-variant)' }, [
+          h('div', { class: 'row' }, [
+            ev.groupColor ? h('span', { class: 'group-color-dot', style: 'background:' + ev.groupColor }) : null,
+            h('div', { style: 'flex:1' }, [
+              h('div', { style: 'font-weight:500' }, [esc(ev.title)]),
+              h('div', { class: 'muted', style: 'font-size:13px' }, [fmtTimeRange(ev.startAt, ev.endAt)]),
+            ]),
+            statusEl,
+          ]),
+        ]);
+        // Quick action: register from dashboard
+        if (!ev.myAttendance && ev.mode !== 'closed' && !ev.isCancelled) {
+          var quickBtn = h('button', { class: 'btn tonal', style: 'margin-top:6px;min-height:32px;font-size:12px;padding:0 14px', onclick: function (e) {
+            e.stopPropagation();
+            API.post('/events/' + ev.id + '/attendance', { action: 'register' })
+              .then(function () { snack('Anmeldung gespeichert'); navigate('dashboard'); })
+              .catch(function (ex) { snack(ex.message, true); });
+          } }, [icon('check'), ev.mode === 'request' ? 'Teilnahme anfragen' : 'Anmelden']);
+          eventRow.appendChild(quickBtn);
+        }
+        evCard.appendChild(eventRow);
       });
+      if (events.length > 5) {
+        evCard.appendChild(h('button', { class: 'btn text', style: 'margin-top:8px', onclick: function () { navigate('events'); } }, ['Alle ' + events.length + ' Termine anzeigen →']));
+      }
       grid.appendChild(evCard);
 
-      grid.appendChild(h('div', { class: 'card' }, [
-        h('h3', {}, ['Konto']),
-        h('div', { class: 'row' }, [h('span', { class: 'chip' }, [state.me.role])]),
-        h('p', { class: 'muted' }, [(state.me.groups || []).length + ' Gruppe(n)']),
-      ]));
+      // -- Unread messages --
+      var msgCard = h('div', { class: 'card' }, [
+        h('div', { class: 'row' }, [
+          icon('campaign'),
+          h('h3', { style: 'flex:1;margin:0' }, ['Nachrichten']),
+          messages.length ? h('span', { class: 'badge-count' }, [String(messages.length)]) : null,
+        ]),
+      ]);
+      if (!messages.length) {
+        msgCard.appendChild(h('div', { class: 'muted', style: 'padding:16px 0' }, ['Keine neuen Nachrichten.']));
+      }
+      messages.slice(0, 3).forEach(function (m) {
+        msgCard.appendChild(h('div', { style: 'padding:8px 0;border-bottom:1px solid var(--md-outline-variant)' }, [
+          h('div', { style: 'font-weight:500;font-size:14px' }, [esc(m.title)]),
+          h('div', { class: 'muted', style: 'font-size:13px' }, [esc((m.body || '').substring(0, 80)) + (m.body && m.body.length > 80 ? '…' : '')]),
+        ]));
+      });
+      if (messages.length > 3) {
+        msgCard.appendChild(h('button', { class: 'btn text', style: 'margin-top:8px', onclick: function () { navigate('messages'); } }, ['Alle Nachrichten →']));
+      }
+      grid.appendChild(msgCard);
+
+      // -- Groups --
+      var groups = me.groups || [];
+      var grpCard = h('div', { class: 'card' }, [
+        h('div', { class: 'row' }, [icon('groups'), h('h3', { style: 'flex:1;margin:0' }, ['Meine Gruppen'])]),
+      ]);
+      if (!groups.length) {
+        grpCard.appendChild(h('div', { class: 'muted', style: 'padding:16px 0' }, ['Keiner Gruppe zugewiesen.']));
+      }
+      groups.forEach(function (g) {
+        grpCard.appendChild(h('div', { class: 'row', style: 'padding:6px 0' }, [
+          h('span', { class: 'chip selected' }, [esc(g.name)]),
+        ]));
+      });
+      grid.appendChild(grpCard);
+
+      // -- Quick stats --
+      var today = new Date();
+      var todaysEvents = events.filter(function (ev) {
+        return new Date(ev.startAt).toDateString() === today.toDateString();
+      });
+      var myRegistered = events.filter(function (ev) {
+        return ev.myAttendance === 'registered' || ev.myAttendance === 'confirmed';
+      });
+      var statsCard = h('div', { class: 'card' }, [
+        h('div', { class: 'row' }, [icon('insights'), h('h3', { style: 'flex:1;margin:0' }, ['Auf einen Blick'])]),
+        h('div', { class: 'grid', style: 'grid-template-columns:1fr 1fr;gap:12px;margin-top:12px' }, [
+          h('div', {}, [h('div', { class: 'stat-number' }, [String(todaysEvents.length)]), h('div', { class: 'stat-label' }, ['Heute'])]),
+          h('div', {}, [h('div', { class: 'stat-number' }, [String(events.length)]), h('div', { class: 'stat-label' }, ['Anstehend'])]),
+          h('div', {}, [h('div', { class: 'stat-number' }, [String(myRegistered.length)]), h('div', { class: 'stat-label' }, ['Meine Anmeldungen'])]),
+          h('div', {}, [h('div', { class: 'stat-number' }, [String(groups.length)]), h('div', { class: 'stat-label' }, ['Gruppen'])]),
+        ]),
+      ]);
+      grid.appendChild(statsCard);
 
       node.appendChild(grid);
     }).catch(function (ex) { showError(node, ex); });
   }
 
   // ---------------------------------------------------------------------------
-  // Termine + Anwesenheit
+  // Termine + Anwesenheit (komplett überarbeitet)
   // ---------------------------------------------------------------------------
   function attendanceButtons(ev) {
-    var wrap = h('div', { class: 'row' });
+    var wrap = h('div', { class: 'row', style: 'margin-top:8px' });
+    var myStatus = ev.myAttendance;
     function act(path, body, label) {
       return API.post('/events/' + ev.id + path, body || {})
         .then(function () { snack(label + ' gespeichert'); navigate('events'); })
         .catch(function (ex) { snack(ex.message, true); });
     }
     var myId = state.me.id;
-    if (ev.mode === 'open') {
-      wrap.appendChild(h('button', { class: 'btn tonal', onclick: function () { act('/attendance', { action: 'register' }, 'Anmeldung'); } }, [icon('check'), 'Anmelden']));
-      wrap.appendChild(h('button', { class: 'btn outlined', onclick: function () { act('/attendance', { action: 'withdraw' }, 'Abmeldung'); } }, [icon('close'), 'Abmelden']));
-    } else if (ev.mode === 'request') {
-      wrap.appendChild(h('button', { class: 'btn tonal', onclick: function () { act('/attendance', { action: 'register' }, 'Anfrage'); } }, [icon('front_hand'), 'Teilnahme anfragen']));
-      wrap.appendChild(h('button', { class: 'btn outlined', onclick: function () { act('/attendance', { action: 'withdraw' }, 'Abmeldung'); } }, [icon('close'), 'Abmelden']));
-    } else {
-      wrap.appendChild(h('span', { class: 'chip' }, ['Geschlossen']));
+
+    // Context-aware buttons based on current status
+    if (ev.mode === 'closed') {
+      wrap.appendChild(h('span', { class: 'chip' }, ['Geschlossen – keine Selbstanmeldung']));
+      return wrap;
     }
-    // Zusage/Absage im Bestätigungsfenster
-    if (ev.confirmationWindowMinutes != null) {
-      wrap.appendChild(h('button', { class: 'btn text', onclick: function () { act('/attendance/' + myId + '/confirm', {}, 'Zusage'); } }, [icon('event_available'), 'Zusagen']));
+
+    if (!myStatus || myStatus === 'withdrawn' || myStatus === 'cancelled') {
+      // Not registered yet
+      if (ev.mode === 'request') {
+        wrap.appendChild(h('button', { class: 'btn tonal', onclick: function () { act('/attendance', { action: 'register' }, 'Anfrage'); } }, [icon('front_hand'), 'Teilnahme anfragen']));
+      } else {
+        wrap.appendChild(h('button', { class: 'btn success', onclick: function () { act('/attendance', { action: 'register' }, 'Anmeldung'); } }, [icon('check'), 'Anmelden']));
+      }
+    } else {
+      // Already registered/confirmed/requested – show withdraw
+      wrap.appendChild(h('button', { class: 'btn outlined', onclick: function () { act('/attendance', { action: 'withdraw' }, 'Abmeldung'); } }, [icon('close'), 'Abmelden']));
+    }
+
+    // Confirm/decline buttons only when in confirmation window
+    if (ev.confirmationWindowMinutes != null && (myStatus === 'registered' || myStatus === 'requested')) {
+      wrap.appendChild(h('button', { class: 'btn tonal', onclick: function () { act('/attendance/' + myId + '/confirm', {}, 'Zusage'); } }, [icon('event_available'), 'Zusagen']));
       wrap.appendChild(h('button', { class: 'btn text', onclick: function () { act('/attendance/' + myId + '/decline', {}, 'Absage'); } }, [icon('event_busy'), 'Absagen']));
     }
     return wrap;
@@ -325,29 +533,117 @@
     var actions = [];
     if (canManage) actions.push(h('button', { class: 'btn', onclick: function () { eventDialog(); } }, [icon('add'), 'Termin']));
     node.appendChild(sectionHead('Termine', actions));
-    loading(node);
-    API.get('/events').then(function (events) {
-      clear(node);
-      node.appendChild(sectionHead('Termine', actions));
-      if (!events || !events.length) { node.appendChild(h('div', { class: 'empty' }, [icon('calendar_month'), h('div', {}, ['Keine Termine.'])])); return; }
-      var stack = h('div', { class: 'stack' });
-      events.forEach(function (ev) {
-        var headRow = h('div', { class: 'row' }, [
-          h('h3', { style: 'flex:1;margin:0' }, [esc(ev.title)]),
-          ev.seriesId ? h('span', { class: 'chip', title: 'Serientermin' }, ['Serie']) : null,
-          h('span', { class: 'chip' }, [ev.mode]),
-        ]);
-        var card = h('div', { class: 'card' }, [
-          headRow,
-          h('div', { class: 'muted' }, [fmtDate(ev.startAt) + (ev.location ? ' · ' + esc(ev.location) : '')]),
-          ev.description ? h('p', {}, [esc(ev.description)]) : null,
-          ev.isCancelled ? h('div', { class: 'error-text' }, ['Ausgefallen: ' + esc(ev.cancelReason || '')]) : attendanceButtons(ev),
-        ]);
-        if (canManage) card.appendChild(eventManageRow(ev));
-        stack.appendChild(card);
-      });
-      node.appendChild(stack);
-    }).catch(function (ex) { showError(node, ex); });
+
+    // Filter bar
+    var groupFilter = h('select', {}, [h('option', { value: '' }, ['Alle Gruppen'])]);
+    API.get('/groups').then(function (groups) {
+      (groups || []).forEach(function (g) { groupFilter.appendChild(h('option', { value: g.id }, [g.name])); });
+    }).catch(function () {});
+    var dateFilter = h('select', {}, [
+      h('option', { value: 'upcoming' }, ['Anstehend']),
+      h('option', { value: 'today' }, ['Heute']),
+      h('option', { value: 'week' }, ['Diese Woche']),
+      h('option', { value: 'all' }, ['Alle']),
+    ]);
+    var filterBar = h('div', { class: 'filter-bar' }, [
+      icon('filter_list'),
+      groupFilter,
+      dateFilter,
+    ]);
+    node.appendChild(filterBar);
+
+    var listContainer = h('div');
+    node.appendChild(listContainer);
+    skeletonList(listContainer, 4);
+
+    function loadEvents() {
+      var params = '';
+      var dateVal = dateFilter.value;
+      var now = new Date();
+      if (dateVal === 'upcoming') {
+        params += 'from=' + encodeURIComponent(now.toISOString());
+      } else if (dateVal === 'today') {
+        var todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        var todayEnd = new Date(todayStart.getTime() + 86400000);
+        params += 'from=' + encodeURIComponent(todayStart.toISOString()) + '&to=' + encodeURIComponent(todayEnd.toISOString());
+      } else if (dateVal === 'week') {
+        var weekEnd = new Date(now.getTime() + 7 * 86400000);
+        params += 'from=' + encodeURIComponent(now.toISOString()) + '&to=' + encodeURIComponent(weekEnd.toISOString());
+      }
+      if (groupFilter.value) params += (params ? '&' : '') + 'groupId=' + groupFilter.value;
+
+      skeletonList(listContainer, 4);
+      API.get('/events' + (params ? '?' + params : '')).then(function (events) {
+        clear(listContainer);
+        if (!events || !events.length) {
+          listContainer.appendChild(emptyState('calendar_month', 'Keine Termine gefunden.', canManage ? 'Erstelle deinen ersten Termin mit dem + Button oben.' : 'Aktuell keine Termine für den gewählten Filter.'));
+          return;
+        }
+        var stack = h('div', { class: 'stack' });
+        events.forEach(function (ev) {
+          // Header
+          var headRow = h('div', { class: 'row' }, [
+            ev.groupColor ? h('span', { class: 'group-color-dot', style: 'background:' + ev.groupColor }) : null,
+            h('h3', { style: 'flex:1;margin:0' }, [esc(ev.title)]),
+            ev.seriesId ? h('span', { class: 'chip', title: 'Serientermin' }, [icon('repeat'), 'Serie']) : null,
+            statusChip(ev.myAttendance),
+          ]);
+
+          // Meta line
+          var metaItems = [
+            h('span', {}, [icon('schedule'), ' ', fmtTimeRange(ev.startAt, ev.endAt)]),
+          ];
+          if (ev.groupName) metaItems.push(h('span', {}, [icon('group'), ' ', esc(ev.groupName)]));
+          if (ev.location) metaItems.push(h('span', {}, [icon('location_on'), ' ', esc(ev.location)]));
+          var metaRow = h('div', { class: 'event-meta' }, metaItems);
+
+          // Participant count
+          var partRow = h('div', { class: 'event-participants' }, [
+            icon('people'),
+            String(ev.totalRegistered || 0) + ' angemeldet',
+            ev.minParticipants > 0 ? ' / min. ' + ev.minParticipants + ' nötig' : '',
+          ]);
+
+          // Deadline info
+          var deadlineRow = null;
+          if (ev.signupDeadline && !ev.myAttendance) {
+            var dl = fmtDeadline(ev.signupDeadline);
+            if (dl) {
+              deadlineRow = h('div', { class: 'info-text ' + (dl.warn ? 'deadline-warn' : 'deadline-ok') }, [
+                icon('timer'), 'Anmeldefrist: ' + dl.text,
+              ]);
+            }
+          }
+          if (ev.withdrawDeadline && ev.myAttendance && ev.myAttendance !== 'withdrawn') {
+            var wdl = fmtDeadline(ev.withdrawDeadline);
+            if (wdl) {
+              var wNode = h('div', { class: 'info-text ' + (wdl.warn ? 'deadline-warn' : 'deadline-ok') }, [
+                icon('timer_off'), 'Abmeldefrist: ' + wdl.text,
+              ]);
+              deadlineRow = deadlineRow ? h('div', {}, [deadlineRow, wNode]) : wNode;
+            }
+          }
+
+          var card = h('div', { class: 'card' }, [
+            headRow,
+            metaRow,
+            ev.description ? h('p', { style: 'margin:4px 0 8px' }, [esc(ev.description)]) : null,
+            partRow,
+            deadlineRow,
+            ev.isCancelled
+              ? h('div', { class: 'error-text', style: 'margin-top:8px' }, [icon('cancel'), ' Ausgefallen' + (ev.cancelReason ? ': ' + esc(ev.cancelReason) : '')])
+              : attendanceButtons(ev),
+          ]);
+          if (canManage) card.appendChild(eventManageRow(ev));
+          stack.appendChild(card);
+        });
+        listContainer.appendChild(stack);
+      }).catch(function (ex) { showError(listContainer, ex); });
+    }
+
+    groupFilter.addEventListener('change', loadEvents);
+    dateFilter.addEventListener('change', loadEvents);
+    loadEvents();
   }
 
   function askScope(ev, cb) {
@@ -390,7 +686,7 @@
     }
     row.appendChild(h('button', { class: 'icon-btn', title: 'Löschen', onclick: function () {
       askScope(ev, function (scope) {
-        var d = dialog('Termin löschen', [h('p', {}, ['„' + esc(ev.title) + '“ wirklich löschen?'])], [
+        var d = dialog('Termin löschen', [h('p', {}, ['„' + esc(ev.title) + '" wirklich löschen?'])], [
           h('button', { class: 'btn text', onclick: function () { d.close(); } }, ['Abbrechen']),
           h('button', { class: 'btn danger', onclick: function () {
             API.del('/events/' + ev.id + '?scope=' + scope).then(function () { d.close(); snack('Gelöscht'); navigate('events'); }).catch(function (ex) { snack(ex.message, true); });
@@ -523,13 +819,13 @@
     API.get('/chat/rooms').then(function (rooms) {
       clear(node);
       node.appendChild(sectionHead('Chat', actions));
-      if (!rooms || !rooms.length) { node.appendChild(h('div', { class: 'empty' }, [icon('chat'), h('div', {}, ['Keine Chats.'])])); return; }
+      if (!rooms || !rooms.length) { node.appendChild(emptyState('chat', 'Keine Chats.', 'Starte einen neuen Chat mit dem + Button.')); return; }
       var stack = h('div', { class: 'stack' });
       rooms.forEach(function (r) {
         var names = (r.participants || []).map(function (p) { return p.name; }).join(', ');
-        stack.appendChild(h('div', { class: 'card', style: 'cursor:pointer', onclick: function () { openRoom(r); } }, [
+        stack.appendChild(h('div', { class: 'card clickable', onclick: function () { openRoom(r); } }, [
           h('div', { class: 'row' }, [icon(r.type === 'group' ? 'groups' : 'person'),
-            h('div', {}, [h('div', {}, [esc(r.name || names)]), h('div', { class: 'muted' }, [names])])]),
+            h('div', {}, [h('div', { style: 'font-weight:500' }, [esc(r.name || names)]), h('div', { class: 'muted', style: 'font-size:13px' }, [names])])]),
         ]));
       });
       node.appendChild(stack);
@@ -573,8 +869,9 @@
       API.get('/chat/rooms/' + room.id + '/messages').then(function (msgs) {
         clear(list);
         (msgs || []).forEach(function (m) {
-          var line = h('div', { class: 'row' }, [h('div', { style: 'flex:1' }, [h('span', { class: 'muted' }, [esc(m.senderName) + ': ']),
-            m.deleted ? h('em', { class: 'muted' }, ['(gelöscht)']) : esc(m.body)])]);
+          var isMine = m.senderId === state.me.id;
+          var line = h('div', { class: 'row', style: isMine ? 'justify-content:flex-end' : '' }, [h('div', { style: 'flex:1;' + (isMine ? 'text-align:right' : '') }, [h('span', { class: 'muted', style: 'font-size:12px' }, [esc(m.senderName)]),
+            h('div', {}, [m.deleted ? h('em', { class: 'muted' }, ['(gelöscht)']) : esc(m.body)])])]);
           if (canMod && !m.deleted) {
             line.appendChild(h('button', { class: 'icon-btn', title: 'Moderieren', onclick: function () {
               API.del('/chat/messages/' + m.id).then(function () { snack('Gelöscht'); load(); }).catch(function (ex) { snack(ex.message, true); });
@@ -620,7 +917,10 @@
       API.get(url).then(function (msgs) {
         clear(node);
         node.appendChild(sectionHead('Systemnachrichten', actions));
-        if (!msgs || !msgs.length) { node.appendChild(h('div', { class: 'empty' }, [icon('campaign'), h('div', {}, ['Keine Nachrichten.'])])); return; }
+        if (!msgs || !msgs.length) {
+          node.appendChild(emptyState('campaign', 'Keine Nachrichten.', canManage ? 'Erstelle eine neue Systemnachricht für deine Nutzer.' : 'Alles erledigt – keine neuen Nachrichten.'));
+          return;
+        }
         var stack = h('div', { class: 'stack' });
         msgs.forEach(function (m) {
           var footer;
@@ -642,7 +942,11 @@
               h('button', { class: 'btn text', onclick: function () { API.post('/messages/' + m.id + '/dismiss', {}).then(function () { snack('Ausgeblendet'); load(); }); } }, [icon('visibility_off'), 'Ausblenden']),
             ]);
           }
-          stack.appendChild(h('div', { class: 'card' }, [h('h3', {}, [esc(m.title)]), h('p', {}, [esc(m.body)]), footer]));
+          stack.appendChild(h('div', { class: 'card' }, [
+            h('div', { class: 'row' }, [icon('info'), h('h3', { style: 'margin:0' }, [esc(m.title)])]),
+            h('p', {}, [esc(m.body)]),
+            footer,
+          ]));
         });
         node.appendChild(stack);
       }).catch(function (ex) { showError(node, ex); });
@@ -686,7 +990,7 @@
     API.get('/users').then(function (users) {
       clear(node);
       node.appendChild(sectionHead('Nutzerverwaltung', actions));
-      var filter = h('input', { placeholder: 'Suchen (Name/E-Mail/Rolle)…', style: 'width:100%;margin-bottom:12px' });
+      var filter = h('input', { placeholder: 'Suchen (Name/E-Mail/Rolle)…', style: 'width:100%;margin-bottom:12px;padding:10px 14px;border-radius:var(--radius-sm);border:1px solid var(--md-outline);background:var(--md-surface);color:var(--md-on-surface);font:inherit' });
       node.appendChild(filter);
       var table = h('table', {}, [h('thead', {}, [h('tr', {}, [
         h('th', {}, ['Name']), h('th', {}, ['E-Mail']), h('th', {}, ['Rolle']), h('th', {}, ['Status']),
@@ -695,12 +999,16 @@
       var tbody = h('tbody');
       function render(list) {
         clear(tbody);
+        if (!list || !list.length) {
+          tbody.appendChild(h('tr', {}, [h('td', { colspan: '6', style: 'text-align:center;padding:24px' }, ['Keine Nutzer gefunden.'])]));
+          return;
+        }
         list.forEach(function (u) {
           tbody.appendChild(h('tr', {}, [
-            h('td', {}, [h('a', { href: 'javascript:void 0', onclick: function () { userDialog(u); } }, [esc(u.name)])]),
+            h('td', {}, [h('a', { href: 'javascript:void 0', onclick: function () { userDialog(u); }, style: 'color:var(--md-primary);text-decoration:none;font-weight:500' }, [esc(u.name)])]),
             h('td', { class: 'muted' }, [esc(u.email || '—')]),
             h('td', {}, [h('span', { class: 'chip' }, [u.role])]),
-            h('td', {}, [u.isActive ? 'aktiv' : 'gesperrt']),
+            h('td', {}, [u.isActive ? h('span', { style: 'color:var(--md-success)' }, ['● aktiv']) : h('span', { style: 'color:var(--md-error)' }, ['● gesperrt'])]),
             h('td', { class: 'muted' }, [fmtDate(u.lastActiveAt)]),
             h('td', {}, [h('div', { class: 'row-actions' }, [
               h('button', { class: 'icon-btn', title: 'Rechte', onclick: function () { userPermsDialog(u); } }, [icon('shield')]),
@@ -820,44 +1128,128 @@
       .catch(function (ex) { snack(ex.message, true); });
   }
   function deleteUser(u) {
-    var d = dialog('Nutzer löschen', [h('p', {}, ['„' + esc(u.name) + '“ wirklich löschen?'])], [
+    var d = dialog('Nutzer löschen', [
+      h('p', {}, ['„' + esc(u.name) + '" wirklich löschen?']),
+      h('p', { class: 'muted' }, ['Alle Anwesenheitsdaten, Chatnachrichten und Verknüpfungen werden unwiderruflich entfernt.']),
+    ], [
       h('button', { class: 'btn text', onclick: function () { d.close(); } }, ['Abbrechen']),
       h('button', { class: 'btn danger', onclick: function () {
         API.del('/users/' + u.id).then(function () { d.close(); snack('Gelöscht'); navigate('users'); })
           .catch(function (ex) { snack(ex.message, true); });
-      } }, ['Löschen']),
+      } }, ['Endgültig löschen']),
     ]);
   }
 
   // ---------------------------------------------------------------------------
-  // Gruppen
+  // Gruppen (komplett überarbeitet mit Detailansicht)
   // ---------------------------------------------------------------------------
   function viewGroups(node) {
     clear(node);
-    var actions = [h('button', { class: 'btn', onclick: function () {
-      var name = fieldInput('Gruppenname', 'name');
-      var d = dialog('Neue Gruppe', [name.wrap], [
-        h('button', { class: 'btn text', onclick: function () { d.close(); } }, ['Abbrechen']),
-        h('button', { class: 'btn', onclick: function () {
-          API.post('/groups', { name: name.input.value.trim() }).then(function () { d.close(); snack('Gruppe erstellt'); navigate('groups'); })
-            .catch(function (ex) { snack(ex.message, true); });
-        } }, ['Speichern']),
-      ]);
-    } }, [icon('add'), 'Gruppe'])];
+    var actions = [h('button', { class: 'btn', onclick: function () { groupDialog(null); } }, [icon('add'), 'Gruppe'])];
     node.appendChild(sectionHead('Gruppen', actions));
     loading(node);
     API.get('/groups').then(function (groups) {
       clear(node);
       node.appendChild(sectionHead('Gruppen', actions));
+      if (!groups || !groups.length) {
+        node.appendChild(emptyState('groups', 'Keine Gruppen vorhanden.', 'Erstelle deine erste Gruppe mit dem + Button.'));
+        return;
+      }
       var grid = h('div', { class: 'grid' });
-      (groups || []).forEach(function (g) {
-        grid.appendChild(h('div', { class: 'card' }, [
-          h('div', { class: 'row' }, [icon('groups'), h('h3', { style: 'margin:0' }, [esc(g.name)])]),
-          h('p', { class: 'muted' }, [(g.memberCount != null ? g.memberCount : (g.members ? g.members.length : 0)) + ' Mitglieder']),
+      groups.forEach(function (g) {
+        grid.appendChild(h('div', { class: 'card clickable', onclick: function () { groupDetailDialog(g); } }, [
+          h('div', { class: 'row' }, [
+            g.color ? h('span', { class: 'group-color-dot', style: 'background:' + g.color + ';width:16px;height:16px' }) : icon('groups'),
+            h('h3', { style: 'flex:1;margin:0' }, [esc(g.name)]),
+            h('span', { class: 'chip' }, [String(g.memberCount != null ? g.memberCount : 0) + ' Mitglieder']),
+          ]),
+          g.description ? h('p', { class: 'muted', style: 'margin:8px 0 0' }, [esc(g.description)]) : null,
         ]));
       });
-      node.appendChild(grid.children.length ? grid : h('div', { class: 'empty' }, [icon('groups'), h('div', {}, ['Keine Gruppen.'])]));
+      node.appendChild(grid);
     }).catch(function (ex) { showError(node, ex); });
+  }
+
+  function groupDialog(g) {
+    var editing = !!g;
+    var name = fieldInput('Gruppenname', 'name', 'text', editing ? g.name : '');
+    var desc = fieldInput('Beschreibung (optional)', 'description', 'text', editing ? (g.description || '') : '');
+    var color = fieldInput('Farbe (Hex, optional)', 'color', 'text', editing ? (g.color || '') : '');
+    var err = h('div', { class: 'error-text' });
+    var d;
+    var save = h('button', { class: 'btn' }, [icon('save'), 'Speichern']);
+    save.addEventListener('click', function () {
+      err.textContent = '';
+      var body = { name: name.input.value.trim(), description: desc.input.value.trim() || null, color: color.input.value.trim() || null };
+      if (!body.name) { err.textContent = 'Name erforderlich.'; return; }
+      var p = editing ? API.patch('/groups/' + g.id, body) : API.post('/groups', body);
+      p.then(function () { d.close(); snack('Gespeichert'); navigate('groups'); }).catch(function (ex) { err.textContent = ex.message; });
+    });
+    d = dialog(editing ? 'Gruppe bearbeiten' : 'Neue Gruppe', [name.wrap, desc.wrap, color.wrap, err],
+      [h('button', { class: 'btn text', onclick: function () { d.close(); } }, ['Abbrechen']), save]);
+  }
+
+  function groupDetailDialog(g) {
+    var err = h('div', { class: 'error-text' });
+    var memberList = h('div', { class: 'stack' });
+    var d;
+
+    function loadMembers() {
+      API.get('/groups/' + g.id).then(function (detail) {
+        clear(memberList);
+        var members = detail.members || [];
+        if (!members.length) {
+          memberList.appendChild(h('div', { class: 'muted' }, ['Keine Mitglieder.']));
+          return;
+        }
+        members.forEach(function (m) {
+          memberList.appendChild(h('div', { class: 'row', style: 'padding:6px 0;border-bottom:1px solid var(--md-outline-variant)' }, [
+            icon('person'),
+            h('div', { style: 'flex:1' }, [esc(m.name)]),
+            h('span', { class: 'chip' }, [m.role]),
+            h('button', { class: 'icon-btn', title: 'Entfernen', onclick: function () {
+              API.del('/groups/' + g.id + '/members/' + m.id).then(function () { snack('Entfernt'); loadMembers(); }).catch(function (ex) { snack(ex.message, true); });
+            } }, [icon('person_remove')]),
+          ]));
+        });
+      }).catch(function (ex) { err.textContent = ex.message; });
+    }
+
+    // Add member
+    var addSel = h('select', {}, [h('option', { value: '' }, ['Nutzer wählen…'])]);
+    API.get('/users').then(function (users) {
+      (users || []).forEach(function (u) { addSel.appendChild(h('option', { value: u.id }, [u.name + ' (' + u.role + ')'])); });
+    }).catch(function () {});
+    var addBtn = h('button', { class: 'btn tonal', onclick: function () {
+      if (!addSel.value) { snack('Bitte einen Nutzer wählen', true); return; }
+      API.post('/groups/' + g.id + '/members', { userId: addSel.value })
+        .then(function () { addSel.value = ''; snack('Hinzugefügt'); loadMembers(); })
+        .catch(function (ex) { snack(ex.message, true); });
+    } }, [icon('person_add'), 'Hinzufügen']);
+
+    loadMembers();
+
+    d = dialog(esc(g.name), [
+      g.description ? h('p', { class: 'muted' }, [esc(g.description)]) : null,
+      h('hr', { class: 'divider' }),
+      h('h3', {}, ['Mitglieder']),
+      memberList,
+      h('hr', { class: 'divider' }),
+      h('div', { class: 'field' }, [h('label', {}, ['Mitglied hinzufügen']), addSel]),
+      h('div', { class: 'row' }, [addBtn]),
+      err,
+    ], [
+      h('button', { class: 'btn text', onclick: function () { d.close(); groupDialog(g); } }, [icon('edit'), 'Bearbeiten']),
+      h('button', { class: 'btn text danger', style: 'color:var(--md-error)', onclick: function () {
+        var cd = dialog('Gruppe löschen', [h('p', {}, ['„' + esc(g.name) + '" wirklich löschen? Alle Mitgliedschaften werden entfernt.'])], [
+          h('button', { class: 'btn text', onclick: function () { cd.close(); } }, ['Abbrechen']),
+          h('button', { class: 'btn danger', onclick: function () {
+            API.del('/groups/' + g.id).then(function () { cd.close(); d.close(); snack('Gelöscht'); navigate('groups'); }).catch(function (ex) { snack(ex.message, true); });
+          } }, ['Löschen']),
+        ]);
+      } }, [icon('delete'), 'Löschen']),
+      h('button', { class: 'btn text', onclick: function () { d.close(); } }, ['Schließen']),
+    ]);
   }
 
   // ---------------------------------------------------------------------------
@@ -871,16 +1263,20 @@
     API.get('/registration-codes').then(function (codes) {
       clear(node);
       node.appendChild(sectionHead('Registrierungscodes', actions));
+      if (!codes || !codes.length) {
+        node.appendChild(emptyState('qr_code_2', 'Keine Registrierungscodes.', 'Erstelle einen Code, damit sich neue Nutzer registrieren können.'));
+        return;
+      }
       var table = h('table', {}, [h('thead', {}, [h('tr', {}, [
         h('th', {}, ['Code']), h('th', {}, ['Rolle']), h('th', {}, ['Nutzung']), h('th', {}, ['Status']), h('th', {}, ['']),
       ])])]);
       var tbody = h('tbody');
-      (codes || []).forEach(function (c) {
+      codes.forEach(function (c) {
         tbody.appendChild(h('tr', {}, [
-          h('td', {}, [h('code', {}, [esc(c.code)])]),
+          h('td', {}, [h('code', { style: 'background:var(--md-surface-container-high);padding:4px 8px;border-radius:4px;font-weight:500' }, [esc(c.code)])]),
           h('td', {}, [esc(c.role || '—')]),
           h('td', {}, [(c.useCount || 0) + (c.maxUses ? ' / ' + c.maxUses : '')]),
-          h('td', {}, [c.isActive ? 'aktiv' : 'inaktiv']),
+          h('td', {}, [c.isActive ? h('span', { style: 'color:var(--md-success)' }, ['● aktiv']) : h('span', { class: 'muted' }, ['inaktiv'])]),
           h('td', {}, [h('button', { class: 'icon-btn', title: 'Deaktivieren', onclick: function () {
             API.del('/registration-codes/' + c.id).then(function () { snack('Deaktiviert'); navigate('codes'); })
               .catch(function (ex) { snack(ex.message, true); });
@@ -927,20 +1323,30 @@
       h('button', { class: 'btn tonal', onclick: function () { window.location.href = '/api/reports/export?format=json'; } }, [icon('data_object'), 'JSON']),
     ];
     node.appendChild(sectionHead('Statistik & Reports', actions));
-    loading(node);
+    skeletonCards(node, 4);
     Promise.all([API.get('/statistics/overview'), API.get('/statistics/attendance')]).then(function (r) {
       var s = r[0] || {}, att = r[1] || {};
       clear(node);
       node.appendChild(sectionHead('Statistik & Reports', actions));
       var grid = h('div', { class: 'grid' });
       Object.keys(s).forEach(function (k) {
-        grid.appendChild(h('div', { class: 'card' }, [h('h3', {}, [String(s[k])]), h('div', { class: 'muted' }, [STAT_LABELS[k] || k])]));
+        grid.appendChild(h('div', { class: 'card' }, [
+          h('div', { class: 'stat-number' }, [String(s[k])]),
+          h('div', { class: 'stat-label' }, [STAT_LABELS[k] || k]),
+        ]));
       });
       node.appendChild(grid);
       var byStatus = att.byStatus || {};
-      var attCard = h('div', { class: 'card' }, [h('h3', {}, ['Anwesenheit (' + (att.total || 0) + ' Einträge)'])]);
+      var attCard = h('div', { class: 'card', style: 'margin-top:16px' }, [h('h3', {}, ['Anwesenheit (' + (att.total || 0) + ' Einträge)'])]);
       Object.keys(byStatus).forEach(function (k) {
-        attCard.appendChild(h('div', { class: 'muted' }, [k + ': ' + byStatus[k]]));
+        var pct = att.total ? Math.round(byStatus[k] / att.total * 100) : 0;
+        attCard.appendChild(h('div', { class: 'row', style: 'margin:6px 0' }, [
+          statusChip(k),
+          h('div', { style: 'flex:1;height:8px;background:var(--md-surface-container-high);border-radius:4px;overflow:hidden' }, [
+            h('div', { style: 'height:100%;width:' + pct + '%;background:var(--md-primary);border-radius:4px;transition:width 0.5s' }),
+          ]),
+          h('span', { class: 'muted' }, [byStatus[k] + ' (' + pct + '%)']),
+        ]));
       });
       if (!Object.keys(byStatus).length) attCard.appendChild(h('div', { class: 'muted' }, ['Keine Daten.']));
       node.appendChild(attCard);
@@ -964,7 +1370,7 @@
         return h('option', { value: m, selected: b.themeMode === m ? 'selected' : null }, [m]);
       }));
       // Live-Vorschau
-      var preview = h('div', { class: 'card', style: 'max-width:480px' }, []);
+      var preview = h('div', { class: 'card', style: 'max-width:480px;margin-top:16px' }, []);
       function renderPreview() {
         clear(preview);
         preview.appendChild(h('h3', {}, ['Vorschau']));
@@ -1014,22 +1420,22 @@
   function viewSystem(node) {
     clear(node);
     node.appendChild(sectionHead('System'));
-    loading(node);
+    skeletonCards(node, 4);
     API.get('/system/status').then(function (s) {
       clear(node);
       node.appendChild(sectionHead('System'));
       var grid = h('div', { class: 'grid' });
       grid.appendChild(h('div', { class: 'card' }, [h('h3', {}, ['Laufzeit']),
-        h('div', { class: 'muted' }, ['Uptime: ' + Math.round((s.uptimeSeconds || 0) / 60) + ' min']),
+        h('div', { class: 'stat-number' }, [Math.round((s.uptimeSeconds || 0) / 60) + ' min']),
         h('div', { class: 'muted' }, ['Node: ' + esc(s.nodeVersion)])]));
       var counts = s.counts || {};
       grid.appendChild(h('div', { class: 'card' }, [h('h3', {}, ['Kennzahlen'])].concat(
-        Object.keys(counts).map(function (k) { return h('div', { class: 'muted' }, [k + ': ' + counts[k]]); }))));
+        Object.keys(counts).map(function (k) { return h('div', { class: 'row', style: 'justify-content:space-between;padding:4px 0' }, [h('span', {}, [k]), h('strong', {}, [String(counts[k])])]); }))));
       var jobsCard = h('div', { class: 'card' }, [h('h3', {}, ['Cronjobs'])]);
-      (s.cronJobs || []).forEach(function (j) { jobsCard.appendChild(h('div', { class: 'muted' }, [j.name + ': ' + j.schedule])); });
+      (s.cronJobs || []).forEach(function (j) { jobsCard.appendChild(h('div', { class: 'row', style: 'padding:4px 0' }, [icon('schedule'), h('span', { style: 'flex:1' }, [j.name]), h('code', { class: 'muted' }, [j.schedule])])); });
       grid.appendChild(jobsCard);
       var backupCard = h('div', { class: 'card' }, [h('h3', {}, ['Letzte Backups'])]);
-      (s.backups || []).forEach(function (bk) { backupCard.appendChild(h('div', { class: 'muted' }, [bk.file + ' (' + Math.round(bk.size / 1024) + ' KB)'])); });
+      (s.backups || []).forEach(function (bk) { backupCard.appendChild(h('div', { class: 'row', style: 'padding:4px 0' }, [icon('backup'), h('span', { style: 'flex:1' }, [bk.file]), h('span', { class: 'muted' }, [Math.round(bk.size / 1024) + ' KB'])])); });
       if (!(s.backups || []).length) backupCard.appendChild(h('div', { class: 'muted' }, ['Keine Backups.']));
       grid.appendChild(backupCard);
       node.appendChild(grid);
@@ -1083,25 +1489,88 @@
   }
 
   // ---------------------------------------------------------------------------
-  // Profil + "Activate Special"
+  // Profil + "Activate Special" (komplett überarbeitet)
   // ---------------------------------------------------------------------------
   function viewProfile(node) {
     clear(node);
     node.appendChild(sectionHead('Mein Profil'));
     var me = state.me;
+
+    // Profile info card
     var card = h('div', { class: 'card', style: 'max-width:480px' }, [
-      h('div', { class: 'row' }, [icon('account_circle'), h('h3', { style: 'margin:0' }, [esc(me.name)])]),
-      h('div', { class: 'row' }, [h('span', { class: 'chip' }, [me.role])].concat((me.badges || []).map(function (b) { return h('span', { class: 'chip selected' }, [b]); }))),
-      me.email ? h('p', { class: 'muted' }, [me.email]) : null,
+      h('div', { class: 'row', style: 'gap:16px' }, [
+        h('div', { style: 'width:56px;height:56px;border-radius:50%;background:var(--md-primary-container);display:grid;place-items:center' }, [
+          h('span', { class: 'material-symbols-outlined', style: 'font-size:32px;color:var(--md-on-primary-container)' }, ['person']),
+        ]),
+        h('div', { style: 'flex:1' }, [
+          h('h3', { style: 'margin:0' }, [esc(me.name)]),
+          h('div', { class: 'row', style: 'gap:6px;margin-top:4px' }, [h('span', { class: 'chip' }, [me.role])].concat((me.badges || []).map(function (b) { return h('span', { class: 'chip selected' }, [b]); }))),
+          me.email ? h('div', { class: 'muted', style: 'margin-top:4px' }, [me.email]) : null,
+        ]),
+      ]),
     ]);
     node.appendChild(card);
+
+    // Groups
+    if (me.groups && me.groups.length) {
+      var grpCard = h('div', { class: 'card', style: 'max-width:480px;margin-top:16px' }, [h('h3', {}, ['Meine Gruppen'])]);
+      me.groups.forEach(function (g) { grpCard.appendChild(h('div', { class: 'row', style: 'padding:6px 0' }, [icon('group'), esc(g.name)])); });
+      node.appendChild(grpCard);
+    }
+
+    // Self-service edit
+    var editCard = h('div', { class: 'card', style: 'max-width:480px;margin-top:16px' }, [
+      h('h3', {}, ['Profil bearbeiten']),
+    ]);
+    var editName = fieldInput('Name', 'name', 'text', me.name);
+    var editEmail = fieldInput('E-Mail', 'email', 'email', me.email || '');
+    var err = h('div', { class: 'error-text' });
+    var saveProfile = h('button', { class: 'btn', onclick: function () {
+      err.textContent = '';
+      var body = {};
+      if (editName.input.value.trim() !== me.name) body.name = editName.input.value.trim();
+      if ((editEmail.input.value.trim() || null) !== (me.email || null)) body.email = editEmail.input.value.trim() || null;
+      if (!Object.keys(body).length) { snack('Keine Änderungen'); return; }
+      API.patch('/auth/me', body)
+        .then(function () { snack('Profil aktualisiert'); boot(); })
+        .catch(function (ex) { err.textContent = ex.message; });
+    } }, [icon('save'), 'Speichern']);
+    editCard.appendChild(editName.wrap);
+    editCard.appendChild(editEmail.wrap);
+    editCard.appendChild(err);
+    editCard.appendChild(h('div', { class: 'row' }, [saveProfile]));
+    node.appendChild(editCard);
+
+    // Password change
+    var pwCard = h('div', { class: 'card', style: 'max-width:480px;margin-top:16px' }, [
+      h('h3', {}, ['Passwort ändern']),
+    ]);
+    var curPw = fieldInput('Aktuelles Passwort', 'currentPassword', 'password');
+    var newPw = fieldInput('Neues Passwort (min. 8 Zeichen)', 'newPassword', 'password');
+    var newPw2 = fieldInput('Neues Passwort bestätigen', 'newPassword2', 'password');
+    var pwErr = h('div', { class: 'error-text' });
+    var savePw = h('button', { class: 'btn', onclick: function () {
+      pwErr.textContent = '';
+      if (!curPw.input.value) { pwErr.textContent = 'Aktuelles Passwort erforderlich.'; return; }
+      if (newPw.input.value.length < 8) { pwErr.textContent = 'Neues Passwort zu kurz (min. 8 Zeichen).'; return; }
+      if (newPw.input.value !== newPw2.input.value) { pwErr.textContent = 'Passwörter stimmen nicht überein.'; return; }
+      API.patch('/auth/me', { currentPassword: curPw.input.value, newPassword: newPw.input.value })
+        .then(function () { snack('Passwort geändert'); curPw.input.value = ''; newPw.input.value = ''; newPw2.input.value = ''; })
+        .catch(function (ex) { pwErr.textContent = ex.message; });
+    } }, [icon('lock'), 'Passwort ändern']);
+    pwCard.appendChild(curPw.wrap);
+    pwCard.appendChild(newPw.wrap);
+    pwCard.appendChild(newPw2.wrap);
+    pwCard.appendChild(pwErr);
+    pwCard.appendChild(h('div', { class: 'row' }, [savePw]));
+    node.appendChild(pwCard);
 
     // Activate Special (getarnt als Badge-Freischaltung)
     var code = fieldInput('Code', 'code');
     var pw = fieldInput('Sonderkennwort (nur Erst-Setup)', 'specialPassword', 'password');
-    var err = h('div', { class: 'error-text' });
+    var specErr = h('div', { class: 'error-text' });
     var btn = h('button', { class: 'btn tonal', onclick: function () {
-      err.textContent = '';
+      specErr.textContent = '';
       API.post('/internal/suad/activate-special', { code: code.input.value.trim(), specialPassword: pw.input.value || undefined })
         .then(function (r) {
           if (r.recoveryKey) {
@@ -1109,12 +1578,12 @@
               [h('button', { class: 'btn', onclick: function (e) { e.target.closest('.dialog-scrim').remove(); boot(); } }, ['Verstanden'])]);
           } else { snack('Badge freigeschaltet'); boot(); }
         })
-        .catch(function (ex) { err.textContent = ex.message; });
+        .catch(function (ex) { specErr.textContent = ex.message; });
     } }, [icon('workspace_premium'), 'Freischalten']);
-    node.appendChild(h('div', { class: 'card', style: 'max-width:480px' }, [
+    node.appendChild(h('div', { class: 'card', style: 'max-width:480px;margin-top:16px' }, [
       h('h3', {}, ['Activate Special']),
       h('p', { class: 'muted' }, ['Code zur Badge-Freischaltung eingeben.']),
-      code.wrap, pw.wrap, err, h('div', { class: 'row' }, [btn]),
+      code.wrap, pw.wrap, specErr, h('div', { class: 'row' }, [btn]),
     ]));
   }
 
@@ -1129,7 +1598,7 @@
     API.get('/substitutions').then(function (subs) {
       clear(node);
       node.appendChild(sectionHead('Vertretungen', actions));
-      if (!subs || !subs.length) { node.appendChild(h('div', { class: 'empty' }, [icon('swap_horiz'), h('div', {}, ['Keine Vertretungen.'])])); return; }
+      if (!subs || !subs.length) { node.appendChild(emptyState('swap_horiz', 'Keine Vertretungen.', 'Erstelle eine Vertretungsanfrage, wenn du an einem Termin verhindert bist.')); return; }
       var stack = h('div', { class: 'stack' });
       subs.forEach(function (s) {
         var row = h('div', { class: 'row-actions', style: 'margin-top:8px' });
@@ -1140,9 +1609,9 @@
         stack.appendChild(h('div', { class: 'card' }, [
           h('div', { class: 'row' }, [
             h('h3', { style: 'flex:1;margin:0' }, [esc(s.event ? s.event.title : '—')]),
-            h('span', { class: 'chip' }, [s.status]),
+            h('span', { class: 'chip status-' + s.status }, [STATUS_LABELS[s.status] || s.status]),
           ]),
-          h('div', { class: 'muted' }, [(s.event ? fmtDate(s.event.startAt) : '') + ' · Anfrage: ' + esc(s.requester ? s.requester.name : '') + (s.filler ? ' · Vertretung: ' + esc(s.filler.name) : '')]),
+          h('div', { class: 'muted' }, [(s.event ? fmtDateFriendly(s.event.startAt) : '') + ' · Anfrage: ' + esc(s.requester ? s.requester.name : '') + (s.filler ? ' · Vertretung: ' + esc(s.filler.name) : '')]),
           s.note ? h('p', {}, [esc(s.note)]) : null,
           row,
         ]));
@@ -1161,7 +1630,7 @@
     var err = h('div', { class: 'error-text' });
     var d;
     API.get('/events?from=' + encodeURIComponent(new Date().toISOString())).then(function (events) {
-      (events || []).forEach(function (ev) { evSel.appendChild(h('option', { value: ev.id }, [ev.title + ' · ' + fmtDate(ev.startAt)])); });
+      (events || []).forEach(function (ev) { evSel.appendChild(h('option', { value: ev.id }, [ev.title + ' · ' + fmtDateFriendly(ev.startAt)])); });
     }).catch(function () { err.textContent = 'Termine konnten nicht geladen werden.'; });
     var save = h('button', { class: 'btn' }, [icon('save'), 'Anfragen']);
     save.addEventListener('click', function () {
@@ -1186,7 +1655,7 @@
     API.get('/permission-profiles').then(function (profiles) {
       clear(node);
       node.appendChild(sectionHead('Rechteprofile', actions));
-      if (!profiles || !profiles.length) { node.appendChild(h('div', { class: 'empty' }, [icon('shield_person'), h('div', {}, ['Keine Profile.'])])); return; }
+      if (!profiles || !profiles.length) { node.appendChild(emptyState('shield_person', 'Keine Rechteprofile.', 'Erstelle ein Rechteprofil, um Rechte gebündelt zu vergeben.')); return; }
       var grid = h('div', { class: 'grid' });
       profiles.forEach(function (p) {
         var cnt = p._count || {};

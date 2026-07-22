@@ -26,8 +26,38 @@ router.get(
     const events = (await prisma.event.findMany({
       where,
       orderBy: { startAt: 'asc' },
-    })) as unknown as EventLike[];
-    res.json(await serializeEvents(events));
+      include: {
+        attendanceRecords: {
+          select: { userId: true, status: true },
+        },
+        group: { select: { id: true, name: true, color: true } },
+      },
+    })) as unknown as (EventLike & {
+      attendanceRecords: { userId: string; status: string }[];
+      group: { id: string; name: string; color: string | null };
+    })[];
+
+    const userId = req.user!.id;
+    const serialized = await serializeEvents(
+      events.map((e) => ({ ...e })) as unknown as EventLike[],
+    );
+    const result = serialized.map((s, i) => {
+      const ev = events[i];
+      const myRec = ev.attendanceRecords.find((r) => r.userId === userId);
+      const counts: Record<string, number> = {};
+      for (const r of ev.attendanceRecords) {
+        counts[r.status] = (counts[r.status] || 0) + 1;
+      }
+      return {
+        ...s,
+        groupName: ev.group.name,
+        groupColor: ev.group.color,
+        myAttendance: myRec ? myRec.status : null,
+        attendanceCounts: counts,
+        totalRegistered: (counts.registered || 0) + (counts.confirmed || 0) + (counts.requested || 0),
+      };
+    });
+    res.json(result);
   }),
 );
 

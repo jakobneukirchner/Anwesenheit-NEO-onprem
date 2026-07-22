@@ -34,7 +34,8 @@ export type AuditAction =
   | 'CREATE_SUAD'
   | 'ISSUE_SUAD_KEY'
   | 'ACTIVATE_SUAD'
-  | 'ASSIGN_BADGE';
+  | 'ASSIGN_BADGE'
+  | 'UPDATE_SELF_PROFILE';
 
 export async function auditLog(
   action: AuditAction,

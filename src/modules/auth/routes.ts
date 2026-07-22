@@ -155,4 +155,45 @@ router.get(
   }),
 );
 
+// PATCH /auth/me – Self-Service Profilbearbeitung
+router.patch(
+  '/me',
+  authenticate,
+  asyncHandler(async (req, res) => {
+    const userId = req.user!.id;
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new HttpError(404, 'Nicht gefunden');
+
+    const data: Record<string, unknown> = {};
+
+    if (typeof req.body.name === 'string' && req.body.name.trim()) {
+      data.name = req.body.name.trim();
+    }
+    if ('email' in req.body) {
+      const newEmail = req.body.email?.trim() || null;
+      if (newEmail && newEmail !== user.email) {
+        const existing = await prisma.user.findUnique({ where: { email: newEmail } });
+        if (existing) throw new HttpError(409, 'E-Mail bereits vergeben');
+      }
+      data.email = newEmail;
+    }
+    // Passwortänderung erfordert das aktuelle Passwort
+    if (typeof req.body.newPassword === 'string' && req.body.newPassword.length >= 8) {
+      const currentPassword: string = req.body.currentPassword;
+      if (!currentPassword) throw new HttpError(400, 'Aktuelles Passwort erforderlich');
+      const ok = await bcrypt.compare(currentPassword, user.passwordHash);
+      if (!ok) throw new HttpError(403, 'Aktuelles Passwort falsch');
+      data.passwordHash = await bcrypt.hash(req.body.newPassword, 12);
+    } else if (typeof req.body.newPassword === 'string') {
+      throw new HttpError(400, 'Neues Passwort zu kurz (min. 8 Zeichen)');
+    }
+
+    if (Object.keys(data).length === 0) throw new HttpError(400, 'Keine Änderungen');
+
+    const updated = await prisma.user.update({ where: { id: userId }, data });
+    await auditLog('UPDATE_SELF_PROFILE', userId, userId, 'user', { fields: Object.keys(data) });
+    res.json({ id: updated.id, name: updated.name, email: updated.email, role: updated.role });
+  }),
+);
+
 export default router;
