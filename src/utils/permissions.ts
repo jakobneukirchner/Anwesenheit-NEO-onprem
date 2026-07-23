@@ -58,7 +58,9 @@ export async function resolvePermission(
   // canViewChildEmail ist ausschließlich SuAd – kein Override möglich
   if (permissionKey === 'canViewChildEmail') {
     const user = await prisma.user.findUnique({ where: { id: userId } });
-    return user?.role === 'suad';
+    if (!user) return false;
+    const { parseRoles } = await import('./roles');
+    return parseRoles(user.role).includes('suad');
   }
 
   const user = await prisma.user.findUnique({

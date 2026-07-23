@@ -150,6 +150,23 @@ model Event {
 }
 
 // ============================================================
+// EVENT TYPES (Admin Configurable)
+// ============================================================
+
+model EventType {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  icon      String   @default("event")
+  color     String?
+  sortOrder Int      @default(0)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("event_types")
+}
+
+// ============================================================
 // ATTENDANCE
 // ============================================================
 

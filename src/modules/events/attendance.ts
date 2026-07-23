@@ -7,10 +7,11 @@ import { packField, unpackField } from '../../utils/crypto';
 const router = Router();
 
 /** Prüft, ob der anfragende Nutzer für targetUserId handeln darf. */
-async function assertCanActFor(actorId: string, actorRole: string, targetUserId: string): Promise<void> {
-  if (actorId === targetUserId) return;
-  const isManager = await resolvePermission(actorId, 'canManageSchedule');
-  if (isManager || actorRole === 'admin' || actorRole === 'suad') return;
+async function assertCanActFor(actorId: string, actorRoles: string[], targetUserId: string): Promise<void> {
+  if (actorId === targetUserId) return; // darf sich selbst anmelden
+
+  // Admin/Koordinator/Trainer/SuAd dürfen alle Termine für andere verwalten
+  if (actorRoles.some(r => ['admin', 'coordinator', 'teacher', 'suad'].includes(r))) return;
 
   const canParent = await resolvePermission(actorId, 'canActAsParentForChild');
   if (canParent) {
@@ -101,7 +102,7 @@ router.post(
     if (!event) throw new HttpError(404, 'Termin nicht gefunden');
     if (event.isCancelled) throw new HttpError(400, 'Termin ist ausgefallen');
 
-    await assertCanActFor(actorId, req.user!.role, targetUserId);
+    await assertCanActFor(actorId, req.user!.roles, targetUserId);
 
     const now = new Date();
     const existing = await prisma.attendanceRecord.findUnique({
@@ -137,7 +138,7 @@ router.post(
             throw new HttpError(400, 'Abmeldefrist abgelaufen');
           }
           // Kind darf sich nur selbst abmelden, wenn erlaubt
-          if (targetUserId === actorId && req.user!.role === 'member') {
+          if (targetUserId === actorId && !req.user!.roles.some(r => ['admin', 'teacher', 'coordinator', 'suad'].includes(r))) {
             const allowed = await resolvePermission(actorId, 'childCanSelfWithdraw');
             if (!allowed) throw new HttpError(403, 'Selbstabmeldung nicht erlaubt');
           }
@@ -197,9 +198,19 @@ router.post(
   '/:id/attendance/set-status',
   asyncHandler(async (req, res) => {
     const actorId = req.user!.id;
-    const isManager = await resolvePermission(actorId, 'canManageSchedule');
-    if (!isManager && req.user!.role !== 'admin' && req.user!.role !== 'suad') {
-      throw new HttpError(403, 'Nur Trainer/Admin dürfen den Status direkt setzen');
+    const ev = await prisma.event.findUnique({ where: { id: req.params.id } });
+    if (!ev) throw new HttpError(404, 'Termin nicht gefunden');
+
+    const actorRoles = req.user!.roles;
+    let isManager = false;
+    if (ev.groupId) {
+      const ms = await prisma.groupMembership.findUnique({
+        where: { userId_groupId: { userId: req.user!.id, groupId: ev.groupId } },
+      });
+      if (ms && actorRoles.some(r => ['teacher', 'coordinator'].includes(r))) isManager = true;
+    }
+    if (!isManager && !actorRoles.some(r => ['admin', 'suad', 'coordinator'].includes(r))) {
+      throw new HttpError(403, 'Nur Trainer oder Admins können Anwesenheiten setzen');
     }
 
     const { userId, status } = req.body as { userId?: string; status?: string };
@@ -228,8 +239,18 @@ router.post(
   '/:id/attendance/check-in',
   asyncHandler(async (req, res) => {
     const actorId = req.user!.id;
-    const isManager = await resolvePermission(actorId, 'canManageSchedule');
-    if (!isManager && req.user!.role !== 'admin' && req.user!.role !== 'suad') {
+    const ev = await prisma.event.findUnique({ where: { id: req.params.id } });
+    if (!ev) throw new HttpError(404, 'Termin nicht gefunden');
+
+    const actorRoles = req.user!.roles;
+    let isManager = false;
+    if (ev.groupId) {
+      const ms = await prisma.groupMembership.findUnique({
+        where: { userId_groupId: { userId: req.user!.id, groupId: ev.groupId } },
+      });
+      if (ms && actorRoles.some(r => ['teacher', 'coordinator'].includes(r))) isManager = true;
+    }
+    if (!isManager && !actorRoles.some(r => ['admin', 'suad', 'coordinator'].includes(r))) {
       throw new HttpError(403, 'Nur Trainer/Admin dürfen die Anwesenheitskontrolle durchführen');
     }
 
@@ -267,7 +288,7 @@ router.post(
 router.delete(
   '/:id/attendance/:userId',
   asyncHandler(async (req, res) => {
-    await assertCanActFor(req.user!.id, req.user!.role, req.params.userId);
+    await assertCanActFor(req.user!.id, req.user!.roles, req.params.userId);
     const event = await prisma.event.findUnique({ where: { id: req.params.id } });
     if (!event) throw new HttpError(404, 'Termin nicht gefunden');
 

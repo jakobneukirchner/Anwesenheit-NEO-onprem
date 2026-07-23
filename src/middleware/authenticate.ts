@@ -3,7 +3,19 @@ import jwt from 'jsonwebtoken';
 
 interface AccessTokenPayload {
   id: string;
-  role: string;
+  roles: string[];
+}
+
+declare global {
+  namespace Express {
+    interface Request {
+      user?: {
+        id: string;
+        roles: string[];
+      };
+      hasRole?: (role: string) => boolean;
+    }
+  }
 }
 
 /** Liest den Access-Token aus httpOnly-Cookie oder Authorization-Header. */
@@ -24,7 +36,8 @@ export function authenticate(req: Request, res: Response, next: NextFunction): v
   }
   try {
     const payload = jwt.verify(token, process.env.JWT_SECRET as string) as AccessTokenPayload;
-    req.user = { id: payload.id, role: payload.role };
+    req.user = { id: payload.id, roles: payload.roles };
+    req.hasRole = (role: string) => payload.roles.includes(role);
     next();
   } catch {
     res.status(401).json({ error: 'Token ungültig oder abgelaufen' });
@@ -33,7 +46,7 @@ export function authenticate(req: Request, res: Response, next: NextFunction): v
 
 /** Beschränkt Zugriff auf SuAd-Accounts. */
 export function requireSuAd(req: Request, res: Response, next: NextFunction): void {
-  if (req.user?.role !== 'suad') {
+  if (!req.hasRole?.('suad')) {
     res.status(403).json({ error: 'Forbidden' });
     return;
   }

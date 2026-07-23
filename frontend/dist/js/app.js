@@ -172,15 +172,17 @@
   // ---------------------------------------------------------------------------
   // Navigation
   // ---------------------------------------------------------------------------
-  function navFor(role) {
+  function navFor(roles) {
+    if (!roles) roles = [];
     var items = [
       { id: 'dashboard', label: 'Start', icon: 'dashboard' },
       { id: 'events', label: 'Termine', icon: 'calendar_month' },
       { id: 'chat', label: 'Chat', icon: 'chat' },
       { id: 'messages', label: 'Nachrichten', icon: 'campaign' },
     ];
-    var admin = role === 'admin' || role === 'coordinator' || role === 'suad';
-    if (role === 'teacher' || admin) items.push({ id: 'subs', label: 'Vertretung', icon: 'swap_horiz' });
+    var admin = roles.indexOf('admin') >= 0 || roles.indexOf('coordinator') >= 0 || roles.indexOf('suad') >= 0;
+    var teacher = roles.indexOf('teacher') >= 0;
+    if (teacher || admin) items.push({ id: 'subs', label: 'Vertretung', icon: 'swap_horiz' });
     if (admin) {
       items.push({ id: 'users', label: 'Nutzer', icon: 'group' });
       items.push({ id: 'groups', label: 'Gruppen', icon: 'groups' });
@@ -190,8 +192,8 @@
       items.push({ id: 'branding', label: 'Branding', icon: 'palette' });
       items.push({ id: 'system', label: 'System', icon: 'monitoring' });
     }
-    if (role === 'teacher') items.push({ id: 'stats', label: 'Statistik', icon: 'bar_chart' });
-    if (role === 'suad') items.push({ id: 'suad', label: 'Intern', icon: 'admin_panel_settings' });
+    if (teacher && !admin) items.push({ id: 'stats', label: 'Statistik', icon: 'bar_chart' });
+    if (roles.indexOf('suad') >= 0) items.push({ id: 'suad', label: 'Intern', icon: 'admin_panel_settings' });
     items.push({ id: 'profile', label: 'Profil', icon: 'account_circle' });
     return items;
   }
@@ -201,7 +203,7 @@
   // ---------------------------------------------------------------------------
   var currentView = 'dashboard';
   function renderShell() {
-    clear(app); var b = state.branding || {}, me = state.me, items = navFor(me.role);
+    clear(app); var b = state.branding || {}, me = state.me, items = navFor(me.roles || [me.role]);
     var rail = h('div', { class: 'rail' });
     items.forEach(function (it) { rail.appendChild(h('button', { class: 'rail-item' + (it.id === currentView ? ' active' : ''), onclick: function () { navigate(it.id); } }, [h('span', { class: 'ind' }, [icon(it.icon)]), it.label])); });
     var appbar = h('div', { class: 'appbar' }, [b.logoUrl ? h('img', { class: 'logo', src: b.logoUrl, alt: '' }) : icon('event_available'), h('div', { class: 'title' }, [b.appName || 'Anwesenheit NEO']), h('span', { class: 'chip' }, [me.role]), h('button', { class: 'icon-btn', title: 'Abmelden', onclick: logout }, [icon('logout')])]);
@@ -782,9 +784,15 @@
   function logout() { API.post('/auth/logout', {}).catch(function () {}).then(function () { state.me = null; if (window.chatSocket) { try { window.chatSocket.disconnect(); } catch (e) {} window.chatSocket = null; } renderAuth('login'); }); }
   function boot() {
     return API.get('/branding').catch(function () { return {}; }).then(function (b) { applyBranding(b || {});
-      return API.get('/auth/me').then(function (me) { state.me = me; var hash = (location.hash || '').replace('#/', '');
-        currentView = hash && navFor(me.role).some(function (i) { return i.id === hash; }) ? hash : 'dashboard';
-        renderShell(); loadSocketIO(); }).catch(function () { renderAuth('login'); }); });
+      return API.get('/auth/me').then(function (me) { state.me = me;
+        return API.get('/event-types').catch(function() { return []; }).then(function(types) {
+          state.eventTypes = types;
+          types.forEach(function(t) { TYPE_LABELS[t.name] = t.name; TYPE_ICONS[t.name] = t.icon; });
+          var hash = (location.hash || '').replace('#/', '');
+          currentView = hash && navFor(me.roles || [me.role]).some(function (i) { return i.id === hash; }) ? hash : 'dashboard';
+          renderShell(); loadSocketIO();
+        });
+      }).catch(function () { renderAuth('login'); }); });
   }
   if ('serviceWorker' in navigator) window.addEventListener('load', function () { navigator.serviceWorker.register('/sw.js').catch(function () {}); });
   boot().catch(function () { renderAuth('login'); });

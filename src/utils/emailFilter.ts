@@ -18,10 +18,10 @@ export type SafeUser = Record<string, unknown>;
  */
 export function filterChildEmail(
   targetUser: SafeUser,
-  requestingRole: string
+  requestingRoles: string[]
 ): SafeUser {
   const isMember = targetUser.role === 'member';
-  const isSuAd = requestingRole === 'suad';
+  const isSuAd = requestingRoles.includes('suad');
 
   if (isMember && !isSuAd) {
     const { email, ...rest } = targetUser as any;
@@ -37,7 +37,7 @@ export function filterChildEmail(
  */
 export function filterChildEmails(
   users: SafeUser[],
-  requestingRole: string
+  requestingRoles: string[]
 ): SafeUser[] {
-  return users.map((u) => filterChildEmail(u, requestingRole));
+  return users.map((u) => filterChildEmail(u, requestingRoles));
 }

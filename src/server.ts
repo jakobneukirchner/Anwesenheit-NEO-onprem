@@ -64,11 +64,14 @@ app.get(
   }),
 );
 
+import eventTypesRouter from './modules/event-types/routes';
+
 // API-Routen
 app.use('/api/auth', authRouter);
 app.use('/api/users', usersRouter);
 app.use('/api/groups', groupsRouter);
 app.use('/api/events', eventsRouter);
+app.use('/api/event-types', eventTypesRouter);
 app.use('/api/substitutions', substitutionsRouter);
 app.use('/api/messages', messagesRouter);
 app.use('/api/chat', chatRouter);

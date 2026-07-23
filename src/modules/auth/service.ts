@@ -27,9 +27,9 @@ function cookieOptions(maxAge: number) {
   };
 }
 
-export function signAccessToken(user: { id: string; role: string }): string {
+export function signAccessToken(user: { id: string; roles: string[] }): string {
   return jwt.sign(
-    { id: user.id, role: user.role },
+    { id: user.id, roles: user.roles },
     process.env.JWT_SECRET as string,
     { expiresIn: process.env.JWT_EXPIRES_IN ?? '15m' } as jwt.SignOptions,
   );
@@ -49,7 +49,7 @@ export async function issueRefreshToken(userId: string): Promise<string> {
  */
 export async function rotateRefreshToken(
   oldToken: string,
-): Promise<{ token: string; userId: string; role: string } | null> {
+): Promise<{ token: string; userId: string; roles: string[] } | null> {
   const stored = await prisma.refreshToken.findUnique({
     where: { token: oldToken },
     include: { user: true },
@@ -62,7 +62,8 @@ export async function rotateRefreshToken(
     data: { revokedAt: new Date() },
   });
   const token = await issueRefreshToken(stored.userId);
-  return { token, userId: stored.userId, role: stored.user.role };
+  const { parseRoles } = await import('../../utils/roles');
+  return { token, userId: stored.userId, roles: parseRoles(stored.user.role) };
 }
 
 export async function revokeRefreshToken(token: string): Promise<void> {

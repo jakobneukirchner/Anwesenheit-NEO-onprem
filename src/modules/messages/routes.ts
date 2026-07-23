@@ -22,7 +22,7 @@ router.get(
   '/',
   asyncHandler(async (req, res) => {
     const userId = req.user!.id;
-    const role = req.user!.role;
+    const roles = req.user!.roles;
     const now = new Date();
     const messages = await prisma.systemMessage.findMany({
       where: {
@@ -30,6 +30,13 @@ router.get(
         AND: [
           { OR: [{ validFrom: null }, { validFrom: { lte: now } }] },
           { OR: [{ validUntil: null }, { validUntil: { gte: now } }] },
+          {
+            OR: [
+              { targetRoles: { contains: '"all"' } },
+              ...roles.map((r) => ({ targetRoles: { contains: `"${r}"` } })),
+              { targetUsers: { contains: `"${userId}"` } },
+            ],
+          },
         ],
       },
       include: { dismissals: { where: { userId } } },
@@ -37,12 +44,12 @@ router.get(
     });
     const visible = messages.filter((m) => {
       if (m.dismissals.length > 0) return false;
-      const roles = parseJsonArray(m.targetRoles);
+      const msgRoles = parseJsonArray(m.targetRoles);
       const users = parseJsonArray(m.targetUsers);
-      if (roles.includes('all')) return true;
-      if (roles.includes(role)) return true;
+      if (msgRoles.includes('all')) return true;
+      if (msgRoles.some((r) => roles.includes(r))) return true;
       if (users.includes(userId)) return true;
-      return roles.length === 0 && users.length === 0;
+      return msgRoles.length === 0 && users.length === 0;
     });
     const out = await Promise.all(
       visible.map(async (m) => ({

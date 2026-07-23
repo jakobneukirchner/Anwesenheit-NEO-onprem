@@ -15,6 +15,7 @@ import {
   clearAuthCookies,
   REFRESH_COOKIE_NAME,
 } from './service';
+import { parseRoles, primaryRole } from '../../utils/roles';
 
 const router = Router();
 
@@ -42,12 +43,12 @@ router.post(
     const ok = await bcrypt.compare(password, user.passwordHash);
     if (!ok) throw new HttpError(401, 'Login fehlgeschlagen');
 
-    const accessToken = signAccessToken(user);
+    const accessToken = signAccessToken({ id: user.id, roles: parseRoles(user.role) });
     const refreshToken = await issueRefreshToken(user.id);
     setAuthCookies(res, accessToken, refreshToken);
     await prisma.user.update({ where: { id: user.id }, data: { lastActiveAt: new Date() } });
 
-    res.json({ id: user.id, name: user.name, role: user.role });
+    res.json({ id: user.id, name: user.name, role: primaryRole(user.role), roles: parseRoles(user.role) });
   }),
 );
 
@@ -63,7 +64,7 @@ router.post(
       clearAuthCookies(res);
       throw new HttpError(401, 'Refresh-Token ungültig');
     }
-    const accessToken = signAccessToken({ id: rotated.userId, role: rotated.role });
+    const accessToken = signAccessToken({ id: rotated.userId, roles: rotated.roles });
     setAuthCookies(res, accessToken, rotated.token);
     res.json({ ok: true });
   }),
@@ -98,8 +99,8 @@ router.post(
     if (regCode.maxUses != null && regCode.useCount >= regCode.maxUses) {
       throw new HttpError(400, 'Code-Nutzungslimit erreicht');
     }
-    // suad ist niemals per Code registrierbar
-    const role = regCode.role === 'suad' ? 'member' : regCode.role;
+    const roleSingle = regCode.role === 'suad' ? 'member' : regCode.role;
+    const role = JSON.stringify([roleSingle]);
 
     if (email) {
       const existing = await prisma.user.findUnique({ where: { email } });
@@ -122,10 +123,10 @@ router.post(
 
     await auditLog('USE_REGISTRATION_CODE', user.id, regCode.id, 'registration_code', { role });
 
-    const accessToken = signAccessToken(user);
+    const accessToken = signAccessToken({ id: user.id, roles: parseRoles(user.role) });
     const refreshToken = await issueRefreshToken(user.id);
     setAuthCookies(res, accessToken, refreshToken);
-    res.status(201).json({ id: user.id, name: user.name, role: user.role });
+    res.status(201).json({ id: user.id, name: user.name, role: primaryRole(user.role), roles: parseRoles(user.role) });
   }),
 );
 
@@ -147,7 +148,8 @@ router.get(
       id: user.id,
       name: user.name,
       email: user.email,
-      role: user.role,
+      role: primaryRole(user.role),
+      roles: parseRoles(user.role),
       isActive: user.isActive,
       groups: user.groupMemberships.map((m) => ({ id: m.group.id, name: m.group.name })),
       badges: user.badges.map((b) => b.badge),
@@ -192,7 +194,7 @@ router.patch(
 
     const updated = await prisma.user.update({ where: { id: userId }, data });
     await auditLog('UPDATE_SELF_PROFILE', userId, userId, 'user', { fields: Object.keys(data) });
-    res.json({ id: updated.id, name: updated.name, email: updated.email, role: updated.role });
+    res.json({ id: updated.id, name: updated.name, email: updated.email, role: primaryRole(updated.role), roles: parseRoles(updated.role) });
   }),
 );
 

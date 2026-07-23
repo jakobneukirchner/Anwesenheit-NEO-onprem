@@ -135,14 +135,15 @@ router.get(
 router.get(
   '/users',
   asyncHandler(async (req, res) => {
+    const { primaryRole, parseRoles } = await import('../../utils/roles');
     const users = await prisma.user.findMany({ orderBy: { name: 'asc' } });
     for (const u of users) {
-      if (u.role === 'member' && u.email) await auditLog('VIEW_CHILD_EMAIL', req.user!.id, u.id, 'user');
+      if (primaryRole(u.role) === 'member' && u.email) await auditLog('VIEW_CHILD_EMAIL', req.user!.id, u.id, 'user');
     }
     // SuAd sieht E-Mails ungefiltert
     res.json(filterChildEmails(users.map((u) => ({
-      id: u.id, name: u.name, email: u.email, role: u.role, isActive: u.isActive,
-    })), 'suad'));
+      id: u.id, name: u.name, email: u.email, role: primaryRole(u.role), roles: parseRoles(u.role), isActive: u.isActive,
+    })), ['suad']));
   }),
 );
 

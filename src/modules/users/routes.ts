@@ -7,6 +7,7 @@ import { requirePermission, resolvePermission } from '../../utils/permissions';
 import { filterChildEmail, filterChildEmails } from '../../utils/emailFilter';
 import { auditLog } from '../../utils/audit';
 import { SELECTABLE_ROLES } from '../../utils/permissionCatalog';
+import { parseRoles, primaryRole } from '../../utils/roles';
 
 const router = Router();
 router.use(authenticate);
@@ -27,7 +28,8 @@ function toDto(u: UserRow) {
     id: u.id,
     name: u.name,
     email: u.email,
-    role: u.role,
+    role: primaryRole(u.role),
+    roles: parseRoles(u.role),
     isActive: u.isActive,
     lastActiveAt: u.lastActiveAt,
     createdAt: u.createdAt,
@@ -36,9 +38,9 @@ function toDto(u: UserRow) {
 }
 
 /** SuAd-Zugriff auf eine Kind-E-Mail protokollieren. */
-async function auditChildEmailAccess(actorId: string, role: string, targets: UserRow[]): Promise<void> {
-  if (role !== 'suad') return;
-  const children = targets.filter((t) => t.role === 'member' && t.email);
+async function auditChildEmailAccess(actorId: string, roles: string[], targets: UserRow[]): Promise<void> {
+  if (!roles.includes('suad')) return;
+  const children = targets.filter((t) => primaryRole(t.role) === 'member' && t.email);
   for (const child of children) {
     await auditLog('VIEW_CHILD_EMAIL', actorId, child.id, 'user');
   }
@@ -49,14 +51,15 @@ router.get(
   '/',
   requirePermission('canManageUsers'),
   asyncHandler(async (req, res) => {
-    const role = req.user!.role;
+    const roles = req.user!.roles;
+    const isSuAd = roles.includes('suad');
     const users = (await prisma.user.findMany({
-      where: role === 'suad' ? {} : { role: { not: 'suad' } },
+      where: isSuAd ? {} : { role: { not: { contains: 'suad' } } },
       include: { groupMemberships: { include: { group: true } } },
       orderBy: { name: 'asc' },
     })) as unknown as UserRow[];
-    await auditChildEmailAccess(req.user!.id, role, users);
-    res.json(filterChildEmails(users.map(toDto), role));
+    await auditChildEmailAccess(req.user!.id, roles, users);
+    res.json(filterChildEmails(users.map(toDto), roles));
   }),
 );
 
@@ -67,9 +70,12 @@ router.post(
   asyncHandler(async (req, res) => {
     const { name, password } = req.body as { name?: string; password?: string };
     const email: string | undefined = req.body.email || undefined;
-    let role: string = req.body.role ?? 'member';
     if (!name || !password) throw new HttpError(400, 'name und password erforderlich');
-    if (!SELECTABLE_ROLES.includes(role)) role = 'member'; // suad nie über diesen Endpoint
+
+    let rolesToSet = Array.isArray(req.body.roles) ? req.body.roles : [req.body.role ?? 'member'];
+    rolesToSet = rolesToSet.filter((r: string) => SELECTABLE_ROLES.includes(r));
+    if (rolesToSet.length === 0) rolesToSet = ['member']; // suad nie über diesen Endpoint
+    const role = JSON.stringify(rolesToSet);
 
     if (email) {
       const existing = await prisma.user.findUnique({ where: { email } });
@@ -78,7 +84,7 @@ router.post(
     const passwordHash = await bcrypt.hash(password, 12);
     const user = await prisma.user.create({ data: { name, email, passwordHash, role } });
     await auditLog('CREATE_USER', req.user!.id, user.id, 'user', { role });
-    res.status(201).json(filterChildEmail(toDto(user as unknown as UserRow), req.user!.role));
+    res.status(201).json(filterChildEmail(toDto(user as unknown as UserRow), req.user!.roles));
   }),
 );
 
@@ -87,7 +93,8 @@ router.get(
   '/:id',
   requirePermission('canManageUsers'),
   asyncHandler(async (req, res) => {
-    const role = req.user!.role;
+    const roles = req.user!.roles;
+    const isSuAd = roles.includes('suad');
     const user = (await prisma.user.findUnique({
       where: { id: req.params.id },
       include: {
@@ -100,11 +107,11 @@ router.get(
       childLinks: { parent: UserRow }[];
     }) | null;
     if (!user) throw new HttpError(404, 'Nicht gefunden');
-    if (user.role === 'suad' && role !== 'suad') throw new HttpError(404, 'Nicht gefunden');
+    if (parseRoles(user.role).includes('suad') && !isSuAd) throw new HttpError(404, 'Nicht gefunden');
 
-    await auditChildEmailAccess(req.user!.id, role, [user]);
-    const dto = filterChildEmail(toDto(user), role) as Record<string, unknown>;
-    dto.children = filterChildEmails(user.parentLinks.map((l) => toDto(l.child)), role);
+    await auditChildEmailAccess(req.user!.id, roles, [user]);
+    const dto = filterChildEmail(toDto(user), roles) as Record<string, unknown>;
+    dto.children = filterChildEmails(user.parentLinks.map((l) => toDto(l.child)), roles);
     dto.parents = user.childLinks.map((l) => toDto(l.parent));
     res.json(dto);
   }),
@@ -117,28 +124,36 @@ router.patch(
   asyncHandler(async (req, res) => {
     const target = await prisma.user.findUnique({ where: { id: req.params.id } });
     if (!target) throw new HttpError(404, 'Nicht gefunden');
-    if (target.role === 'suad' && req.user!.role !== 'suad') throw new HttpError(403, 'Forbidden');
+    const targetIsSuAd = parseRoles(target.role).includes('suad');
+    if (targetIsSuAd && !req.user!.roles.includes('suad')) throw new HttpError(403, 'Forbidden');
 
     const data: Record<string, unknown> = {};
     if (typeof req.body.name === 'string') data.name = req.body.name;
     if ('email' in req.body) data.email = req.body.email || null;
     if (typeof req.body.isActive === 'boolean') {
       // Erster SuAd darf nie deaktiviert werden
-      if (target.role === 'suad' && req.body.isActive === false) {
-        const firstSuAd = await prisma.user.findFirst({ where: { role: 'suad' }, orderBy: { createdAt: 'asc' } });
+      if (targetIsSuAd && req.body.isActive === false) {
+        const firstSuAd = await prisma.user.findFirst({ where: { role: { contains: 'suad' } }, orderBy: { createdAt: 'asc' } });
         if (firstSuAd?.id === target.id) throw new HttpError(403, 'Erster SuAd ist unveränderlich');
       }
       data.isActive = req.body.isActive;
     }
-    if (typeof req.body.role === 'string' && SELECTABLE_ROLES.includes(req.body.role)) {
-      if (target.role !== 'suad') data.role = req.body.role; // suad-Rolle nicht per REST änderbar
+    
+    if (Array.isArray(req.body.roles)) {
+      if (!targetIsSuAd) {
+        const validRoles = req.body.roles.filter((r: string) => SELECTABLE_ROLES.includes(r));
+        if (validRoles.length > 0) data.role = JSON.stringify(validRoles);
+      }
+    } else if (typeof req.body.role === 'string' && SELECTABLE_ROLES.includes(req.body.role)) {
+      if (!targetIsSuAd) data.role = JSON.stringify([req.body.role]);
     }
+    
     if (typeof req.body.password === 'string' && req.body.password.length >= 8) {
       data.passwordHash = await bcrypt.hash(req.body.password, 12);
     }
     const updated = await prisma.user.update({ where: { id: target.id }, data });
     await auditLog('UPDATE_USER', req.user!.id, target.id, 'user', { fields: Object.keys(data) });
-    res.json(filterChildEmail(toDto(updated as unknown as UserRow), req.user!.role));
+    res.json(filterChildEmail(toDto(updated as unknown as UserRow), req.user!.roles));
   }),
 );
 
@@ -149,10 +164,10 @@ router.delete(
   asyncHandler(async (req, res) => {
     const target = await prisma.user.findUnique({ where: { id: req.params.id } });
     if (!target) throw new HttpError(404, 'Nicht gefunden');
-    if (target.role === 'suad') {
-      const firstSuAd = await prisma.user.findFirst({ where: { role: 'suad' }, orderBy: { createdAt: 'asc' } });
+    if (parseRoles(target.role).includes('suad')) {
+      const firstSuAd = await prisma.user.findFirst({ where: { role: { contains: 'suad' } }, orderBy: { createdAt: 'asc' } });
       if (firstSuAd?.id === target.id) throw new HttpError(403, 'Erster SuAd ist unlöschbar');
-      if (req.user!.role !== 'suad') throw new HttpError(403, 'Forbidden');
+      if (!req.user!.roles.includes('suad')) throw new HttpError(403, 'Forbidden');
     }
     await prisma.user.delete({ where: { id: target.id } });
     await auditLog('DELETE_USER', req.user!.id, target.id, 'user');
