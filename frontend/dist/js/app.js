@@ -128,7 +128,10 @@
     return h('span', { class: 'chip status-' + status }, [icon(STATUS_ICONS[status] || 'help'), STATUS_LABELS[status] || status]);
   }
   function eventTypeBadge(type) {
-    return h('span', { class: 'event-type-badge event-type-' + (type || 'training') }, [icon(TYPE_ICONS[type] || 'event'), TYPE_LABELS[type] || type]);
+    var tData = (state.eventTypes || []).find(function(t) { return t.name === type; });
+    var style = '';
+    if (tData && tData.color) style = 'background:' + tData.color + ';';
+    return h('span', { class: 'event-type-badge event-type-' + (type || 'training'), style: style }, [icon(TYPE_ICONS[type] || 'event'), TYPE_LABELS[type] || type]);
   }
 
   // ---------------------------------------------------------------------------
@@ -389,7 +392,8 @@
     // Filter
     var groupFilter = h('select', {}, [h('option', { value: '' }, ['Alle ' + t('groups')])]);
     API.get('/groups').then(function (groups) { (groups || []).forEach(function (g) { groupFilter.appendChild(h('option', { value: g.id }, [g.name])); }); }).catch(function () {});
-    var typeFilter = h('select', {}, [h('option', { value: '' }, ['Alle Typen']), h('option', { value: 'training' }, ['Training']), h('option', { value: 'match' }, ['Spiel']), h('option', { value: 'event' }, ['Veranstaltung']), h('option', { value: 'other' }, ['Sonstiges'])]);
+    var typeFilter = h('select', {}, [h('option', { value: '' }, ['Alle Typen'])]);
+    (state.eventTypes || []).forEach(function(t) { if (t.isActive) typeFilter.appendChild(h('option', { value: t.name }, [t.name])); });
     var dateFilter = h('select', {}, [h('option', { value: 'upcoming' }, ['Anstehend']), h('option', { value: 'today' }, ['Heute']), h('option', { value: 'week' }, ['Diese Woche']), h('option', { value: 'all' }, ['Alle'])]);
     node.appendChild(h('div', { class: 'filter-bar' }, [icon('filter_list'), groupFilter, typeFilter, dateFilter]));
 
@@ -577,9 +581,10 @@
 
     // Event-Typ
     var typeSel = h('select', {});
-    [['training', 'Training'], ['match', 'Spiel'], ['event', 'Veranstaltung'], ['other', 'Sonstiges']].forEach(function (t) {
-      var opt = h('option', { value: t[0] }, [t[1]]);
-      if (editing && ev.eventType === t[0]) opt.setAttribute('selected', 'selected');
+    (state.eventTypes || []).forEach(function (t) {
+      if (!t.isActive && (!editing || ev.eventType !== t.name)) return;
+      var opt = h('option', { value: t.name }, [t.name]);
+      if (editing && ev.eventType === t.name) opt.setAttribute('selected', 'selected');
       typeSel.appendChild(opt);
     });
 
@@ -760,7 +765,79 @@
         try { if (termStr) JSON.parse(termStr); } catch (ex) { snack('Begriffe JSON ungültig!', true); return; }
         API.put('/branding', { appName: appName.input.value.trim(), primaryColor: color.input.value.trim(), supportContact: support.input.value.trim(), themeMode: modeSel.value, terminology: termStr }).then(function (nb) { applyBranding(nb); snack('Gespeichert'); renderShell(); }).catch(function (ex) { snack(ex.message, true); }); 
       } }, [icon('save'), 'Speichern']);
-      node.appendChild(h('div', { class: 'card', style: 'max-width:540px' }, [appName.wrap, color.wrap, support.wrap, h('div', { class: 'field' }, [h('label', {}, ['Theme']), modeSel]), termWrap, h('div', { class: 'row' }, [save])])); }).catch(function (ex) { showError(node, ex); }); }
+      node.appendChild(h('div', { class: 'card', style: 'max-width:540px' }, [appName.wrap, color.wrap, support.wrap, h('div', { class: 'field' }, [h('label', {}, ['Theme']), modeSel]), termWrap, h('div', { class: 'row' }, [save])])); 
+      
+      var isAdmin = state.me && (state.me.roles || [state.me.role]).indexOf('admin') >= 0;
+      if (isAdmin) {
+        var typesCard = h('div', { class: 'card', style: 'max-width:540px;margin-top:16px;' }, [
+          h('div', { class: 'row', style: 'justify-content:space-between;align-items:center;margin-bottom:12px' }, [
+            h('h3', {style:'margin:0'}, ['Termintypen']),
+            h('button', { class: 'btn', onclick: function() { eventTypeDialog(null, renderTypes); } }, [icon('add'), 'Neu'])
+          ])
+        ]);
+        var typesList = h('div', { class: 'stack' });
+        typesCard.appendChild(typesList);
+        node.appendChild(typesCard);
+        
+        function renderTypes() {
+          API.get('/event-types/all').then(function(types) {
+            clear(typesList);
+            if(!types || !types.length) { typesList.appendChild(h('div', {class: 'muted'}, ['Keine Termintypen'])); return; }
+            types.forEach(function(t) {
+              var btnRow = h('div', {class: 'row'});
+              btnRow.appendChild(h('button', { class: 'icon-btn', onclick: function() { eventTypeDialog(t, renderTypes); } }, [icon('edit')]));
+              if (t.isActive) {
+                btnRow.appendChild(h('button', { class: 'icon-btn', style: 'color:var(--md-error)', onclick: function() { 
+                  if(confirm('Termintyp deaktivieren?')) {
+                    API.del('/event-types/' + t.id).then(function() { snack('Deaktiviert'); renderTypes(); });
+                  }
+                } }, [icon('delete')]));
+              }
+              typesList.appendChild(h('div', { class: 'row', style: 'padding:8px 0; border-bottom:1px solid var(--md-outline-variant)' }, [
+                h('span', { class: 'event-type-badge', style: 'background:'+(t.color||'var(--md-surface-container-high)') }, [icon(t.icon), t.name]),
+                h('span', { class: 'chip ' + (t.isActive ? 'selected' : ''), style: 'margin-left:8px' }, [t.isActive ? 'Aktiv' : 'Inaktiv']),
+                h('div', { style: 'flex:1' }),
+                btnRow
+              ]));
+            });
+          }).catch(function(ex) { typesList.appendChild(h('div', {class: 'error-text'}, [ex.message])); });
+        }
+        renderTypes();
+      }
+    }).catch(function (ex) { showError(node, ex); }); 
+  }
+
+  function eventTypeDialog(t, onSuccess) {
+    var editing = !!t;
+    var name = fieldInput('Name', 'name', 'text', editing ? t.name : '');
+    var icn = fieldInput('Icon (Material Symbol)', 'icon', 'text', editing ? t.icon : 'event');
+    var color = fieldInput('Farbe (Hex/CSS)', 'color', 'text', editing ? t.color : '');
+    var sort = fieldInput('Sortierung', 'sortOrder', 'number', editing ? String(t.sortOrder) : '0');
+    var isActiveWrap = h('div', { class: 'field' }, [
+      h('label', { class: 'row', style: 'gap:8px;cursor:pointer' }, [
+        h('input', { type: 'checkbox', class: 'is-active-chk', checked: editing ? t.isActive : true }),
+        h('span', {}, ['Aktiv'])
+      ])
+    ]);
+    var err = h('div', { class: 'error-text' });
+    var d;
+    var save = h('button', { class: 'btn' }, [icon('save'), 'Speichern']);
+    save.addEventListener('click', function() {
+      var body = { name: name.input.value.trim(), icon: icn.input.value.trim() || 'event', color: color.input.value.trim() || null, sortOrder: parseInt(sort.input.value, 10)||0, isActive: isActiveWrap.querySelector('input').checked };
+      if (!body.name) { err.textContent = 'Name erforderlich'; return; }
+      var p = editing ? API.patch('/event-types/' + t.id, body) : API.post('/event-types', body);
+      p.then(function() { 
+        d.close(); snack('Gespeichert'); 
+        // Update global mapping
+        API.get('/event-types').then(function(types) {
+          state.eventTypes = types;
+          types.forEach(function(evT) { TYPE_LABELS[evT.name] = evT.name; TYPE_ICONS[evT.name] = evT.icon; });
+        });
+        if(onSuccess) onSuccess(); 
+      }).catch(function(ex) { err.textContent = ex.message; });
+    });
+    d = dialog(editing ? 'Termintyp bearbeiten' : 'Neuer Termintyp', [name.wrap, icn.wrap, color.wrap, sort.wrap, isActiveWrap, err], [h('button', { class: 'btn text', onclick: function () { d.close(); } }, ['Abbrechen']), save]);
+  }
 
   function viewSystem(node) { clear(node); node.appendChild(sectionHead('System')); skeletonCards(node, 4);
     API.get('/system/status').then(function (s) { clear(node); node.appendChild(sectionHead('System'));
