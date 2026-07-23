@@ -79,12 +79,14 @@
 
   var openDialogs = [];
   function closeAllDialogs() { openDialogs.slice().forEach(function (c) { c(); }); }
-  function dialog(title, contentNodes, actions) {
+  function dialog(title, contentNodes, actions, extraClass) {
     var scrim = h('div', { class: 'dialog-scrim' });
     function close() { if (scrim.parentNode) scrim.parentNode.removeChild(scrim); var i = openDialogs.indexOf(close); if (i >= 0) openDialogs.splice(i, 1); }
     scrim.addEventListener('click', function (e) { if (e.target === scrim) close(); });
-    var d = h('div', { class: 'dialog' }, [h('h2', {}, [title])]);
-    contentNodes.forEach(function (n) { if (n) d.appendChild(n); });
+    var d = h('div', { class: 'dialog' + (extraClass ? ' ' + extraClass : '') }, [h('h2', {}, [title])]);
+    var contentWrap = h('div', { class: 'dialog-content' });
+    contentNodes.forEach(function (n) { if (n) contentWrap.appendChild(n); });
+    d.appendChild(contentWrap);
     var act = h('div', { class: 'dialog-actions' });
     (actions || []).forEach(function (a) { act.appendChild(a); });
     d.appendChild(act); scrim.appendChild(d); document.body.appendChild(scrim);
@@ -103,10 +105,14 @@
   var STATUS_LABELS = {
     registered: 'Angemeldet', confirmed: 'Bestätigt', present: 'Anwesend',
     pending: 'Bestätigung ausstehend', absent: 'Abgemeldet', cancelled: 'Abgesagt',
+    absent_excused: 'Fehlt (entschuldigt)', absent_unexcused: 'Fehlt (unentschuldigt)',
+    late_excused: 'Verspätet (entschuldigt)', late_unexcused: 'Verspätet (unentschuldigt)'
   };
   var STATUS_ICONS = {
     registered: 'check_circle', confirmed: 'verified', present: 'how_to_reg',
     pending: 'schedule', absent: 'cancel', cancelled: 'block',
+    absent_excused: 'sick', absent_unexcused: 'person_off',
+    late_excused: 'running_with_errors', late_unexcused: 'directions_run'
   };
   var MODE_LABELS = { signup: 'Anmeldebasiert', signoff: 'Abmeldebasiert', confirmation: 'Bestätigung' };
   var MODE_HINTS = {
@@ -126,14 +132,26 @@
   }
 
   // ---------------------------------------------------------------------------
-  // Branding / Theme
+  // Branding / Theme & Terminology
   // ---------------------------------------------------------------------------
+  function t(key) {
+    if (!state.branding || !state.branding.terminology) return defaultTerminology[key] || key;
+    try {
+      var dict = JSON.parse(state.branding.terminology);
+      return dict[key] || defaultTerminology[key] || key;
+    } catch(e) { return defaultTerminology[key] || key; }
+  }
+  var defaultTerminology = {
+    teacher: 'Trainer', member: 'Mitglied', group: 'Mannschaft', event: 'Termin',
+    teachers: 'Trainer', members: 'Mitglieder', groups: 'Mannschaften', events: 'Termine'
+  };
+
   function applyBranding(b) {
     state.branding = b;
     if (b.primaryColor) { document.documentElement.style.setProperty('--md-primary', b.primaryColor); var meta = document.getElementById('theme-color-meta'); if (meta) meta.setAttribute('content', b.primaryColor); }
     if (b.faviconUrl) { var fav = document.getElementById('favicon-link'); if (fav) fav.setAttribute('href', b.faviconUrl); }
     var mode = b.themeMode || 'system';
-    var dark = mode === 'dark' || (mode === 'system' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    var dark = mode === 'system' ? (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) : mode === 'dark';
     document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
     document.title = b.appName || 'Anwesenheit NEO';
   }
@@ -176,7 +194,7 @@
     if (!roles) roles = [];
     var items = [
       { id: 'dashboard', label: 'Start', icon: 'dashboard' },
-      { id: 'events', label: 'Termine', icon: 'calendar_month' },
+      { id: 'events', label: t('events'), icon: 'calendar_month' },
       { id: 'chat', label: 'Chat', icon: 'chat' },
       { id: 'messages', label: 'Nachrichten', icon: 'campaign' },
     ];
@@ -239,15 +257,21 @@
       var grid = h('div', { class: 'grid' });
 
       // -- Nächste Trainings/Spiele --
-      var evCard = h('div', { class: 'card' }, [h('div', { class: 'row' }, [icon('calendar_month'), h('h3', { style: 'flex:1;margin:0' }, ['Nächste Termine'])])]);
+      var evCard = h('div', { class: 'card' }, [h('div', { class: 'row' }, [icon('calendar_month'), h('h3', { style: 'flex:1;margin:0' }, ['Nächste ' + t('events')])])]);
       var upcoming = events.slice(0, 5);
-      if (!upcoming.length) evCard.appendChild(h('div', { class: 'muted', style: 'padding:16px 0' }, ['Keine anstehenden Termine.']));
+      if (!upcoming.length) evCard.appendChild(h('div', { class: 'muted', style: 'padding:16px 0' }, ['Keine anstehenden ' + t('events') + '.']));
       upcoming.forEach(function (ev) {
         var evRow = h('div', { style: 'padding:10px 0;border-bottom:1px solid var(--md-outline-variant)' }, [
           h('div', { class: 'row' }, [
             ev.groupColor ? h('span', { class: 'group-color-dot', style: 'background:' + ev.groupColor }) : null,
             eventTypeBadge(ev.eventType),
-            h('div', { style: 'flex:1' }, [h('div', { style: 'font-weight:500' }, [esc(ev.title)]), h('div', { class: 'muted', style: 'font-size:13px' }, [fmtTimeRange(ev.startAt, ev.endAt)])]),
+            h('div', { style: 'flex:1' }, [
+              h('div', { style: 'font-weight:500' }, [esc(ev.title)]), 
+              h('div', { class: 'row', style: 'font-size:13px; margin-top:2px; gap:8px;' }, [
+                h('span', { class: 'muted' }, [fmtTimeRange(ev.startAt, ev.endAt)]),
+                ev.teacherPresent ? h('span', { class: 'info-text', style: 'color:var(--md-primary)' }, [icon('sports'), t('teacher') + ' anwesend']) : null
+              ])
+            ]),
             statusChip(ev.myAttendance),
           ]),
         ]);
@@ -265,7 +289,7 @@
         }
         evCard.appendChild(evRow);
       });
-      if (events.length > 5) evCard.appendChild(h('button', { class: 'btn text', style: 'margin-top:8px', onclick: function () { navigate('events'); } }, ['Alle ' + events.length + ' Termine →']));
+      if (events.length > 5) evCard.appendChild(h('button', { class: 'btn text', style: 'margin-top:8px', onclick: function () { navigate('events'); } }, ['Alle ' + events.length + ' ' + t('events') + ' →']));
       grid.appendChild(evCard);
 
       // -- Nachrichten --
@@ -277,8 +301,8 @@
 
       // -- Gruppen --
       var groups = me.groups || [];
-      var grpCard = h('div', { class: 'card' }, [h('div', { class: 'row' }, [icon('groups'), h('h3', { style: 'flex:1;margin:0' }, ['Meine Mannschaften'])])]);
-      if (!groups.length) grpCard.appendChild(h('div', { class: 'muted', style: 'padding:16px 0' }, ['Keiner Mannschaft zugewiesen.']));
+      var grpCard = h('div', { class: 'card' }, [h('div', { class: 'row' }, [icon('groups'), h('h3', { style: 'flex:1;margin:0' }, ['Meine ' + t('groups')])])]);
+      if (!groups.length) grpCard.appendChild(h('div', { class: 'muted', style: 'padding:16px 0' }, ['Keiner ' + t('group') + ' zugewiesen.']));
       groups.forEach(function (g) { grpCard.appendChild(h('div', { class: 'row', style: 'padding:6px 0' }, [h('span', { class: 'chip selected' }, [esc(g.name)])])); });
       grid.appendChild(grpCard);
 
@@ -293,7 +317,7 @@
           h('div', {}, [h('div', { class: 'stat-number' }, [String(todaysEvents.length)]), h('div', { class: 'stat-label' }, ['Heute'])]),
           h('div', {}, [h('div', { class: 'stat-number' }, [String(events.length)]), h('div', { class: 'stat-label' }, ['Anstehend'])]),
           h('div', {}, [h('div', { class: 'stat-number' }, [String(myActive.length)]), h('div', { class: 'stat-label' }, ['Meine Zusagen'])]),
-          pendingCount > 0 ? h('div', {}, [h('div', { class: 'stat-number', style: 'color:var(--md-warning)' }, [String(pendingCount)]), h('div', { class: 'stat-label' }, ['Offen (bestätigen!)'])]) : h('div', {}, [h('div', { class: 'stat-number' }, [String(groups.length)]), h('div', { class: 'stat-label' }, ['Mannschaften'])]),
+          pendingCount > 0 ? h('div', {}, [h('div', { class: 'stat-number', style: 'color:var(--md-warning)' }, [String(pendingCount)]), h('div', { class: 'stat-label' }, ['Offen (bestätigen!)'])]) : h('div', {}, [h('div', { class: 'stat-number' }, [String(groups.length)]), h('div', { class: 'stat-label' }, [t('groups')])]),
         ]),
       ]);
       grid.appendChild(statsCard);
@@ -359,11 +383,11 @@
     clear(node);
     var canManage = ['admin', 'coordinator', 'teacher', 'suad'].indexOf(state.me.role) >= 0;
     var actions = [];
-    if (canManage) actions.push(h('button', { class: 'btn', onclick: function () { eventDialog(); } }, [icon('add'), 'Termin']));
-    node.appendChild(sectionHead('Termine', actions));
+    if (canManage) actions.push(h('button', { class: 'btn', onclick: function () { eventDialog(); } }, [icon('add'), t('event')]));
+    node.appendChild(sectionHead(t('events'), actions));
 
     // Filter
-    var groupFilter = h('select', {}, [h('option', { value: '' }, ['Alle Mannschaften'])]);
+    var groupFilter = h('select', {}, [h('option', { value: '' }, ['Alle ' + t('groups')])]);
     API.get('/groups').then(function (groups) { (groups || []).forEach(function (g) { groupFilter.appendChild(h('option', { value: g.id }, [g.name])); }); }).catch(function () {});
     var typeFilter = h('select', {}, [h('option', { value: '' }, ['Alle Typen']), h('option', { value: 'training' }, ['Training']), h('option', { value: 'match' }, ['Spiel']), h('option', { value: 'event' }, ['Veranstaltung']), h('option', { value: 'other' }, ['Sonstiges'])]);
     var dateFilter = h('select', {}, [h('option', { value: 'upcoming' }, ['Anstehend']), h('option', { value: 'today' }, ['Heute']), h('option', { value: 'week' }, ['Diese Woche']), h('option', { value: 'all' }, ['Alle'])]);
@@ -383,7 +407,7 @@
 
       API.get('/events' + (params ? '?' + params : '')).then(function (events) {
         clear(listContainer);
-        if (!events || !events.length) { listContainer.appendChild(emptyState('calendar_month', 'Keine Termine gefunden.', canManage ? 'Erstelle ein Training oder Spiel mit dem + Button.' : 'Aktuell keine Termine für den Filter.')); return; }
+        if (!events || !events.length) { listContainer.appendChild(emptyState('calendar_month', 'Keine ' + t('events') + ' gefunden.', canManage ? 'Erstelle einen ' + t('event') + ' mit dem + Button.' : 'Aktuell keine ' + t('events') + ' für den Filter.')); return; }
         var stack = h('div', { class: 'stack' });
         events.forEach(function (ev) {
           var headRow = h('div', { class: 'row' }, [
@@ -392,10 +416,11 @@
             h('h3', { style: 'flex:1;margin:0' }, [esc(ev.title)]),
             statusChip(ev.myAttendance),
           ]);
-          var metaRow = h('div', { class: 'event-meta' }, [
-            h('span', {}, [icon('schedule'), ' ', fmtTimeRange(ev.startAt, ev.endAt)]),
-            ev.groupName ? h('span', {}, [icon('group'), ' ', esc(ev.groupName)]) : null,
-            ev.location ? h('span', {}, [icon('location_on'), ' ', esc(ev.location)]) : null,
+          var metaRow = h('div', { class: 'row', style: 'margin-bottom:12px;font-size:13px;color:var(--md-on-surface-variant);flex-wrap:wrap;gap:12px' }, [
+            h('span', { class: 'row', style: 'gap:4px' }, [icon('schedule'), fmtTimeRange(ev.startAt, ev.endAt)]),
+            ev.groupName ? h('span', { class: 'row', style: 'gap:4px' }, [icon('group'), esc(ev.groupName)]) : null,
+            ev.location ? h('span', { class: 'row', style: 'gap:4px' }, [icon('location_on'), esc(ev.location)]) : null,
+            ev.teacherPresent ? h('span', { class: 'row', style: 'gap:4px;color:var(--md-primary);font-weight:500' }, [icon('sports'), t('teacher') + ' anwesend']) : null
           ]);
           // Teilnehmerübersicht
           var partText = String(ev.totalRegistered || 0) + ' von ' + (ev.totalMembers || '?') + ' angemeldet';
@@ -449,64 +474,75 @@
         clear(listNode);
         var members = data.members || [];
         var counts = data.counts || {};
-        // Zusammenfassung
-        var summary = h('div', { class: 'attendance-summary' });
-        var statusOrder = ['registered', 'confirmed', 'present', 'pending', 'absent', 'cancelled'];
+        
+        // Export & Summary Header
+        var header = h('div', { class: 'row', style: 'align-items:center;margin-bottom:16px;flex-wrap:wrap;' });
+        var summary = h('div', { class: 'attendance-summary', style: 'margin:0;border:none;flex:1;' });
+        var statusOrder = ['registered', 'confirmed', 'present', 'pending', 'absent', 'cancelled', 'absent_excused', 'absent_unexcused', 'late_excused', 'late_unexcused'];
         statusOrder.forEach(function (s) { if (counts[s]) summary.appendChild(h('div', { class: 'attendance-summary-item' }, [h('span', { class: 'count' }, [String(counts[s])]), statusChip(s)])); });
         summary.appendChild(h('div', { class: 'attendance-summary-item' }, [h('span', { class: 'count' }, [String(data.totalMembers || 0)]), h('span', { class: 'muted' }, ['Gesamt'])]));
-        listNode.appendChild(summary);
+        header.appendChild(summary);
+        
+        var checkInAllBtn = h('button', { class: 'btn', onclick: function () {
+          var pendingIds = members.filter(function (m) { return m.status === 'registered' || m.status === 'confirmed' || m.status === 'pending'; }).map(function (m) { return m.userId; });
+          if (!pendingIds.length) { snack('Niemand mehr offen'); return; }
+          // Combine existing present with new ones for the check-in endpoint
+          var presentIds = members.filter(function(m) { return m.status === 'present'; }).map(function(m) { return m.userId; }).concat(pendingIds);
+          API.post('/events/' + ev.id + '/attendance/check-in', { presentUserIds: presentIds })
+            .then(function () { snack('Alle verbleibenden als Anwesend markiert'); load(); }).catch(function (ex) { snack(ex.message, true); });
+        } }, [icon('how_to_reg'), 'Alle offenen anwesend']);
+        header.appendChild(checkInAllBtn);
+        
+        var exportBtn = h('button', { class: 'btn tonal', onclick: function () { window.location.href = '/api/events/' + ev.id + '/attendance/export'; } }, [icon('download'), 'Export CSV']);
+        header.appendChild(exportBtn);
+        listNode.appendChild(header);
 
         // Modus-Info
-        listNode.appendChild(h('div', { class: 'info-text', style: 'margin-bottom:8px' }, [icon('info'), MODE_LABELS[data.mode] || data.mode, ' – ', MODE_HINTS[data.mode] || '']));
+        listNode.appendChild(h('div', { class: 'info-text', style: 'margin-bottom:16px' }, [icon('info'), MODE_LABELS[data.mode] || data.mode, ' – ', MODE_HINTS[data.mode] || '']));
 
-        // Teilnehmerliste
-        var list = h('div', { class: 'participant-list' });
+        // Klassenbuch Tabelle
+        var tableWrap = h('div', { style: 'overflow-x:auto; background:var(--md-surface); border-radius:12px; border:1px solid var(--md-outline-variant)' });
+        var table = h('table', { class: 'klassenbuch-table' });
+        var thead = h('thead', {}, [h('tr', {}, [h('th', {}, ['Teilnehmer']), h('th', {}, ['Status']), h('th', {}, ['Notiz'])])]);
+        var tbody = h('tbody');
         members.sort(function (a, b) { return a.userName.localeCompare(b.userName); });
         members.forEach(function (m) {
-          var statusSel = h('select', { style: 'font:inherit;padding:4px 8px;border-radius:6px;border:1px solid var(--md-outline);background:var(--md-surface);color:var(--md-on-surface)' });
-          ['registered', 'confirmed', 'present', 'pending', 'absent', 'cancelled'].forEach(function (s) {
-            var opt = h('option', { value: s }, [STATUS_LABELS[s]]);
-            if (m.status === s) opt.setAttribute('selected', 'selected');
-            statusSel.appendChild(opt);
+          var row = h('tr');
+          row.appendChild(h('td', { style: 'font-weight:500;white-space:nowrap;' }, [h('div', {class: 'row'}, [icon('person'), esc(m.userName)])]));
+          
+          var statusCell = h('td');
+          var radioGroup = h('div', { class: 'klassenbuch-radio-group' });
+          ['present', 'absent_excused', 'absent_unexcused', 'late_excused', 'late_unexcused', 'registered', 'confirmed', 'absent', 'cancelled', 'pending'].forEach(function (s) {
+            // Show only relevant statuses or the currently selected one
+            var primaryStatuses = ['present', 'absent_excused', 'absent_unexcused', 'late_excused', 'late_unexcused', 'registered', 'absent'];
+            if (primaryStatuses.indexOf(s) === -1 && m.status !== s) return;
+            
+            var lbl = h('label', { class: 'klassenbuch-radio-label' });
+            var radio = h('input', { type: 'radio', name: 'status_' + m.userId, value: s, style: 'display:none' });
+            if (m.status === s) radio.checked = true;
+            radio.addEventListener('change', function () {
+              API.post('/events/' + ev.id + '/attendance/set-status', { userId: m.userId, status: s })
+                .then(function () { snack('Status aktualisiert'); load(); }).catch(function (ex) { snack(ex.message, true); });
+            });
+            lbl.appendChild(radio);
+            lbl.appendChild(h('span', {}, [STATUS_LABELS[s] || s]));
+            radioGroup.appendChild(lbl);
           });
-          statusSel.addEventListener('change', function () {
-            API.post('/events/' + ev.id + '/attendance/set-status', { userId: m.userId, status: statusSel.value })
-              .then(function () { snack('Status geändert'); load(); }).catch(function (ex) { snack(ex.message, true); });
-          });
-
-          var row = h('div', { class: 'participant-row' }, [
-            icon('person'),
-            h('span', { class: 'participant-name' }, [esc(m.userName)]),
-            m.note ? h('span', { class: 'participant-note' }, ['(' + esc(m.note) + ')']) : null,
-            statusSel,
-          ]);
-          list.appendChild(row);
+          statusCell.appendChild(radioGroup);
+          row.appendChild(statusCell);
+          
+          row.appendChild(h('td', { class: 'muted', style: 'font-size:12px;font-style:italic;' }, [m.note ? esc(m.note) : '']));
+          tbody.appendChild(row);
         });
-        listNode.appendChild(list);
+        table.appendChild(thead);
+        table.appendChild(tbody);
+        tableWrap.appendChild(table);
+        listNode.appendChild(tableWrap);
 
-        // Anwesenheitskontrolle (Quick check-in)
-        listNode.appendChild(h('hr', { class: 'divider' }));
-        listNode.appendChild(h('h3', {}, ['Anwesenheitskontrolle']));
-        listNode.appendChild(h('p', { class: 'muted' }, ['Hake ab, wer tatsächlich da ist. Alle nicht abgehakten werden auf „Abgemeldet" gesetzt.']));
-        var checkBoxes = {};
-        var checkList = h('div', { class: 'participant-list' });
-        members.forEach(function (m) {
-          var cb = h('input', { type: 'checkbox', class: 'check-in-cb' });
-          if (m.status === 'present' || m.status === 'registered' || m.status === 'confirmed') cb.checked = true;
-          checkBoxes[m.userId] = cb;
-          checkList.appendChild(h('div', { class: 'participant-row' }, [cb, h('span', { class: 'participant-name' }, [esc(m.userName)]), statusChip(m.status)]));
-        });
-        listNode.appendChild(checkList);
-        var checkInBtn = h('button', { class: 'btn', style: 'margin-top:12px', onclick: function () {
-          var presentIds = Object.keys(checkBoxes).filter(function (k) { return checkBoxes[k].checked; });
-          API.post('/events/' + ev.id + '/attendance/check-in', { presentUserIds: presentIds })
-            .then(function () { snack('Anwesenheit gespeichert (' + presentIds.length + ' anwesend)'); load(); }).catch(function (ex) { snack(ex.message, true); });
-        } }, [icon('how_to_reg'), 'Anwesenheit speichern']);
-        listNode.appendChild(checkInBtn);
       }).catch(function (ex) { clear(listNode); listNode.appendChild(h('div', { class: 'error-text' }, [ex.message])); });
     }
     load();
-    d = dialog(esc(ev.title) + ' – Teilnehmer', [listNode], [h('button', { class: 'btn text', onclick: function () { d.close(); } }, ['Schließen'])]);
+    d = dialog(esc(ev.title) + ' – Klassenbuch', [listNode], [h('button', { class: 'btn text', onclick: function () { d.close(); } }, ['Schließen'])], 'fullscreen');
   }
 
   // ---------------------------------------------------------------------------
@@ -514,19 +550,19 @@
   // ---------------------------------------------------------------------------
   function askScope(ev, cb) {
     if (!ev.seriesId) { cb('single'); return; }
-    var sel = h('select', {}, [h('option', { value: 'single' }, ['Nur dieser Termin']), h('option', { value: 'following' }, ['Dieser und folgende']), h('option', { value: 'all' }, ['Alle der Serie'])]);
+    var sel = h('select', {}, [h('option', { value: 'single' }, ['Nur dieser ' + t('event')]), h('option', { value: 'following' }, ['Dieser und folgende']), h('option', { value: 'all' }, ['Alle der Serie'])]);
     var d = dialog('Serientermin', [h('div', { class: 'field' }, [h('label', {}, ['Änderung anwenden auf']), sel])], [h('button', { class: 'btn text', onclick: function () { d.close(); } }, ['Abbrechen']), h('button', { class: 'btn', onclick: function () { d.close(); cb(sel.value); } }, ['Weiter'])]);
   }
   function cancelEventDialog(ev) {
     var reason = fieldInput('Begründung', 'reason');
-    var d = dialog('Termin absagen', [reason.wrap], [
+    var d = dialog(t('event') + ' absagen', [reason.wrap], [
       h('button', { class: 'btn text', onclick: function () { d.close(); } }, ['Abbrechen']),
       h('button', { class: 'btn danger', onclick: function () { var r = reason.input.value.trim(); if (!r) { snack('Begründung erforderlich', true); return; } d.close(); askScope(ev, function (scope) { API.post('/events/' + ev.id + '/cancel?scope=' + scope, { reason: r }).then(function () { snack('Abgesagt'); navigate('events'); }).catch(function (ex) { snack(ex.message, true); }); }); } }, ['Absagen']),
     ]);
   }
   function deleteEventDialog(ev) {
     askScope(ev, function (scope) {
-      var d = dialog('Termin löschen', [h('p', {}, ['„' + esc(ev.title) + '" endgültig löschen?'])], [h('button', { class: 'btn text', onclick: function () { d.close(); } }, ['Abbrechen']), h('button', { class: 'btn danger', onclick: function () { API.del('/events/' + ev.id + '?scope=' + scope).then(function () { d.close(); snack('Gelöscht'); navigate('events'); }).catch(function (ex) { snack(ex.message, true); }); } }, ['Löschen'])]);
+      var d = dialog(t('event') + ' löschen', [h('p', {}, ['„' + esc(ev.title) + '" endgültig löschen?'])], [h('button', { class: 'btn text', onclick: function () { d.close(); } }, ['Abbrechen']), h('button', { class: 'btn danger', onclick: function () { API.del('/events/' + ev.id + '?scope=' + scope).then(function () { d.close(); snack('Gelöscht'); navigate('events'); }).catch(function (ex) { snack(ex.message, true); }); } }, ['Löschen'])]);
     });
   }
   function toLocalInput(iso) { if (!iso) return ''; var dt = new Date(iso); return new Date(dt.getTime() - dt.getTimezoneOffset() * 60000).toISOString().slice(0, 16); }
@@ -561,7 +597,7 @@
     modeSel.addEventListener('change', updateModeHint);
     updateModeHint();
 
-    var groupSel = h('select', {}, [h('option', { value: '' }, ['Mannschaft wählen…'])]);
+    var groupSel = h('select', {}, [h('option', { value: '' }, [t('group') + ' wählen…'])]);
     var err = h('div', { class: 'error-text' });
     API.get('/groups').then(function (groups) { (groups || []).forEach(function (g) { var opt = h('option', { value: g.id }, [g.name]); if (editing && ev.groupId === g.id) opt.setAttribute('selected', 'selected'); groupSel.appendChild(opt); }); }).catch(function () { err.textContent = 'Gruppen nicht geladen.'; });
     var signup = fieldInput('Anmeldefrist (optional)', 'signupDeadline', 'datetime-local', editing ? toLocalInput(ev.signupDeadline) : '');
@@ -569,7 +605,7 @@
     var confWin = fieldInput('Bestätigungsfrist (Min. vor Beginn)', 'confirmationWindowMinutes', 'number', editing && ev.confirmationWindowMinutes != null ? String(ev.confirmationWindowMinutes) : '');
     // Serie
     var rruleSel = h('select', {}, [h('option', { value: '' }, ['Einzeltermin']), h('option', { value: 'FREQ=DAILY' }, ['Täglich']), h('option', { value: 'FREQ=WEEKLY' }, ['Wöchentlich']), h('option', { value: 'FREQ=WEEKLY;INTERVAL=2' }, ['14-tägig']), h('option', { value: 'FREQ=MONTHLY' }, ['Monatlich'])]);
-    var count = fieldInput('Anzahl Termine', 'count', 'number', '1');
+    var count = fieldInput('Anzahl ' + t('events'), 'count', 'number', '1');
     var d;
     function payload() {
       return { title: title.input.value.trim(), startAt: start.input.value ? new Date(start.input.value).toISOString() : undefined, endAt: end.input.value ? new Date(end.input.value).toISOString() : undefined,
@@ -581,22 +617,22 @@
     save.addEventListener('click', function () {
       err.textContent = '';
       if (!title.input.value.trim() || !start.input.value || !end.input.value) { err.textContent = 'Titel, Beginn und Ende erforderlich.'; return; }
-      if (!groupSel.value) { err.textContent = 'Bitte eine Mannschaft wählen.'; return; }
+      if (!groupSel.value) { err.textContent = 'Bitte eine ' + t('group') + ' wählen.'; return; }
       if (editing) {
         askScope(ev, function (scope) { API.patch('/events/' + ev.id + '?scope=' + scope, payload()).then(function () { d.close(); snack('Aktualisiert'); navigate('events'); }).catch(function (ex) { err.textContent = ex.message; }); });
       } else {
         var body = payload();
         if (rruleSel.value) { body.rrule = rruleSel.value; body.count = parseInt(count.input.value, 10) || 1; }
-        API.post('/events', body).then(function () { d.close(); snack('Termin erstellt'); navigate('events'); }).catch(function (ex) { err.textContent = ex.message; });
+        API.post('/events', body).then(function () { d.close(); snack(t('event') + ' erstellt'); navigate('events'); }).catch(function (ex) { err.textContent = ex.message; });
       }
     });
     var fields = [title.wrap, h('div', { class: 'field' }, [h('label', {}, ['Typ']), typeSel]), start.wrap, end.wrap, loc.wrap, descWrap,
       h('div', { class: 'field' }, [h('label', {}, ['Anmeldemodus']), modeSel, modeHint]),
-      h('div', { class: 'field' }, [h('label', {}, ['Mannschaft']), groupSel]),
+      h('div', { class: 'field' }, [h('label', {}, [t('group')]), groupSel]),
       signup.wrap, withdraw.wrap, confWin.wrap];
     if (!editing) fields.push(h('div', { class: 'field' }, [h('label', {}, ['Wiederholung']), rruleSel]), count.wrap);
     fields.push(err);
-    d = dialog(editing ? 'Termin bearbeiten' : 'Termin erstellen', fields, [h('button', { class: 'btn text', onclick: function () { d.close(); } }, ['Abbrechen']), save]);
+    d = dialog(editing ? t('event') + ' bearbeiten' : t('event') + ' erstellen', fields, [h('button', { class: 'btn text', onclick: function () { d.close(); } }, ['Abbrechen']), save]);
   }
 
   // ---------------------------------------------------------------------------
@@ -673,16 +709,16 @@
     save.addEventListener('click', function () { var items = Object.keys(boxes).filter(function (k) { return boxes[k].checked; }).map(function (k) { return { permissionKey: k, value: true }; }); API.put('/users/' + u.id + '/permissions', { items: items }).then(function () { d.close(); snack('Gespeichert'); }).catch(function (ex) { err.textContent = ex.message; }); });
     d = dialog('Rechte – ' + esc(u.name), [checks, err], [h('button', { class: 'btn text', onclick: function () { d.close(); } }, ['Abbrechen']), save]); }
 
-  function viewGroups(node) { clear(node); var actions = [h('button', { class: 'btn', onclick: function () { groupDialog(null); } }, [icon('add'), 'Mannschaft'])]; node.appendChild(sectionHead('Mannschaften', actions)); loading(node);
-    API.get('/groups').then(function (groups) { clear(node); node.appendChild(sectionHead('Mannschaften', actions));
-      if (!groups || !groups.length) { node.appendChild(emptyState('groups', 'Keine Mannschaften.', 'Erstelle deine erste Mannschaft.')); return; }
+  function viewGroups(node) { clear(node); var actions = [h('button', { class: 'btn', onclick: function () { groupDialog(null); } }, [icon('add'), t('group')])]; node.appendChild(sectionHead(t('groups'), actions)); loading(node);
+    API.get('/groups').then(function (groups) { clear(node); node.appendChild(sectionHead(t('groups'), actions));
+      if (!groups || !groups.length) { node.appendChild(emptyState('groups', 'Keine ' + t('groups') + '.', 'Erstelle deine erste ' + t('group') + '.')); return; }
       var grid = h('div', { class: 'grid' });
       groups.forEach(function (g) { grid.appendChild(h('div', { class: 'card clickable', onclick: function () { groupDetailDialog(g); } }, [h('div', { class: 'row' }, [g.color ? h('span', { class: 'group-color-dot', style: 'background:' + g.color + ';width:16px;height:16px' }) : icon('groups'), h('h3', { style: 'flex:1;margin:0' }, [esc(g.name)]), h('span', { class: 'chip' }, [String(g.memberCount != null ? g.memberCount : 0) + ' Spieler'])]), g.description ? h('p', { class: 'muted', style: 'margin:8px 0 0' }, [esc(g.description)]) : null])); });
       node.appendChild(grid); }).catch(function (ex) { showError(node, ex); }); }
   function groupDialog(g) { var editing = !!g; var name = fieldInput('Name', 'name', 'text', editing ? g.name : ''); var desc = fieldInput('Beschreibung', 'description', 'text', editing ? (g.description || '') : ''); var color = fieldInput('Farbe (Hex)', 'color', 'text', editing ? (g.color || '') : ''); var err = h('div', { class: 'error-text' }); var d;
     var save = h('button', { class: 'btn' }, [icon('save'), 'Speichern']);
     save.addEventListener('click', function () { var body = { name: name.input.value.trim(), description: desc.input.value.trim() || null, color: color.input.value.trim() || null }; if (!body.name) { err.textContent = 'Name erforderlich.'; return; } var p = editing ? API.patch('/groups/' + g.id, body) : API.post('/groups', body); p.then(function () { d.close(); snack('Gespeichert'); navigate('groups'); }).catch(function (ex) { err.textContent = ex.message; }); });
-    d = dialog(editing ? 'Bearbeiten' : 'Neue Mannschaft', [name.wrap, desc.wrap, color.wrap, err], [h('button', { class: 'btn text', onclick: function () { d.close(); } }, ['Abbrechen']), save]); }
+    d = dialog(editing ? 'Bearbeiten' : 'Neue ' + t('group'), [name.wrap, desc.wrap, color.wrap, err], [h('button', { class: 'btn text', onclick: function () { d.close(); } }, ['Abbrechen']), save]); }
   function groupDetailDialog(g) { var err = h('div', { class: 'error-text' }); var memberList = h('div', { class: 'stack' }); var d;
     function loadMembers() { API.get('/groups/' + g.id).then(function (detail) { clear(memberList); var members = detail.members || []; if (!members.length) { memberList.appendChild(h('div', { class: 'muted' }, ['Keine Spieler.'])); return; }
       members.forEach(function (m) { memberList.appendChild(h('div', { class: 'row', style: 'padding:6px 0;border-bottom:1px solid var(--md-outline-variant)' }, [icon('person'), h('div', { style: 'flex:1' }, [esc(m.name)]), h('span', { class: 'chip' }, [m.role]), h('button', { class: 'icon-btn', title: 'Entfernen', onclick: function () { API.del('/groups/' + g.id + '/members/' + m.id).then(function () { snack('Entfernt'); loadMembers(); }); } }, [icon('person_remove')])])); }); }).catch(function (ex) { err.textContent = ex.message; }); }
@@ -690,7 +726,7 @@
     var addBtn = h('button', { class: 'btn tonal', onclick: function () { if (!addSel.value) return; API.post('/groups/' + g.id + '/members', { userId: addSel.value }).then(function () { addSel.value = ''; snack('Hinzugefügt'); loadMembers(); }).catch(function (ex) { snack(ex.message, true); }); } }, [icon('person_add'), 'Hinzufügen']);
     loadMembers();
     d = dialog(esc(g.name), [g.description ? h('p', { class: 'muted' }, [esc(g.description)]) : null, h('hr', { class: 'divider' }), h('h3', {}, ['Spieler']), memberList, h('hr', { class: 'divider' }), h('div', { class: 'field' }, [h('label', {}, ['Spieler hinzufügen']), addSel]), h('div', { class: 'row' }, [addBtn]), err],
-      [h('button', { class: 'btn text', onclick: function () { d.close(); groupDialog(g); } }, [icon('edit'), 'Bearbeiten']), h('button', { class: 'btn text', style: 'color:var(--md-error)', onclick: function () { var cd = dialog('Löschen?', [h('p', {}, ['Mannschaft „' + esc(g.name) + '" löschen?'])], [h('button', { class: 'btn text', onclick: function () { cd.close(); } }, ['Abbrechen']), h('button', { class: 'btn danger', onclick: function () { API.del('/groups/' + g.id).then(function () { cd.close(); d.close(); snack('Gelöscht'); navigate('groups'); }); } }, ['Löschen'])]); } }, [icon('delete'), 'Löschen']), h('button', { class: 'btn text', onclick: function () { d.close(); } }, ['Schließen'])]); }
+      [h('button', { class: 'btn text', onclick: function () { d.close(); groupDialog(g); } }, [icon('edit'), 'Bearbeiten']), h('button', { class: 'btn text', style: 'color:var(--md-error)', onclick: function () { var cd = dialog('Löschen?', [h('p', {}, [t('group') + ' „' + esc(g.name) + '" löschen?'])], [h('button', { class: 'btn text', onclick: function () { cd.close(); } }, ['Abbrechen']), h('button', { class: 'btn danger', onclick: function () { API.del('/groups/' + g.id).then(function () { cd.close(); d.close(); snack('Gelöscht'); navigate('groups'); }); } }, ['Löschen'])]); } }, [icon('delete'), 'Löschen']), h('button', { class: 'btn text', onclick: function () { d.close(); } }, ['Schließen'])]); }
 
   function viewCodes(node) { clear(node); var actions = [h('button', { class: 'btn', onclick: codeDialog }, [icon('add'), 'Code'])]; node.appendChild(sectionHead('Registrierungscodes', actions)); loading(node);
     API.get('/registration-codes').then(function (codes) { clear(node); node.appendChild(sectionHead('Registrierungscodes', actions));
@@ -699,11 +735,11 @@
       codes.forEach(function (c) { tbody.appendChild(h('tr', {}, [h('td', {}, [h('code', { style: 'background:var(--md-surface-container-high);padding:4px 8px;border-radius:4px;font-weight:500' }, [esc(c.code)])]), h('td', {}, [esc(c.role)]), h('td', {}, [(c.useCount || 0) + (c.maxUses ? '/' + c.maxUses : '')]),
         h('td', {}, [h('button', { class: 'icon-btn', onclick: function () { API.del('/registration-codes/' + c.id).then(function () { snack('Deaktiviert'); navigate('codes'); }); } }, [icon('block')])])])); });
       table.appendChild(tbody); node.appendChild(h('div', { class: 'card' }, [table])); }).catch(function (ex) { showError(node, ex); }); }
-  function codeDialog() { var groupSel = h('select', {}, [h('option', { value: '' }, ['Mannschaft…'])]); var err = h('div', { class: 'error-text' }); API.get('/groups').then(function (groups) { (groups || []).forEach(function (g) { groupSel.appendChild(h('option', { value: g.id }, [g.name])); }); }).catch(function () {});
+  function codeDialog() { var groupSel = h('select', {}, [h('option', { value: '' }, [t('group') + '…'])]); var err = h('div', { class: 'error-text' }); API.get('/groups').then(function (groups) { (groups || []).forEach(function (g) { groupSel.appendChild(h('option', { value: g.id }, [g.name])); }); }).catch(function () {});
     var roleSel = h('select', {}, ['member', 'parent', 'teacher', 'coordinator'].map(function (r) { return h('option', { value: r }, [r]); })); var maxUses = fieldInput('Max. Nutzungen', 'maxUses', 'number'); var d;
     var save = h('button', { class: 'btn' }, [icon('save'), 'Erzeugen']);
-    save.addEventListener('click', function () { if (!groupSel.value) { err.textContent = 'Mannschaft wählen.'; return; } API.post('/registration-codes', { groupId: groupSel.value, role: roleSel.value, maxUses: maxUses.input.value ? parseInt(maxUses.input.value, 10) : undefined }).then(function (c) { d.close(); snack('Code: ' + (c && c.code ? c.code : 'erstellt')); navigate('codes'); }).catch(function (ex) { err.textContent = ex.message; }); });
-    d = dialog('Neuer Code', [h('div', { class: 'field' }, [h('label', {}, ['Mannschaft']), groupSel]), h('div', { class: 'field' }, [h('label', {}, ['Rolle']), roleSel]), maxUses.wrap, err], [h('button', { class: 'btn text', onclick: function () { d.close(); } }, ['Abbrechen']), save]); }
+    save.addEventListener('click', function () { if (!groupSel.value) { err.textContent = t('group') + ' wählen.'; return; } API.post('/registration-codes', { groupId: groupSel.value, role: roleSel.value, maxUses: maxUses.input.value ? parseInt(maxUses.input.value, 10) : undefined }).then(function (c) { d.close(); snack('Code: ' + (c && c.code ? c.code : 'erstellt')); navigate('codes'); }).catch(function (ex) { err.textContent = ex.message; }); });
+    d = dialog('Neuer Code', [h('div', { class: 'field' }, [h('label', {}, [t('group')]), groupSel]), h('div', { class: 'field' }, [h('label', {}, ['Rolle']), roleSel]), maxUses.wrap, err], [h('button', { class: 'btn text', onclick: function () { d.close(); } }, ['Abbrechen']), save]); }
 
   function viewStats(node) { clear(node); var actions = [h('button', { class: 'btn tonal', onclick: function () { window.location.href = '/api/reports/export?format=csv'; } }, [icon('download'), 'CSV'])]; node.appendChild(sectionHead('Statistik', actions)); skeletonCards(node, 4);
     Promise.all([API.get('/statistics/overview'), API.get('/statistics/attendance')]).then(function (r) { var s = r[0] || {}, att = r[1] || {}; clear(node); node.appendChild(sectionHead('Statistik', actions));
@@ -712,12 +748,19 @@
       Object.keys(byStatus).forEach(function (k) { var pct = att.total ? Math.round(byStatus[k] / att.total * 100) : 0; attCard.appendChild(h('div', { class: 'row', style: 'margin:6px 0' }, [statusChip(k), h('div', { style: 'flex:1;height:8px;background:var(--md-surface-container-high);border-radius:4px;overflow:hidden' }, [h('div', { style: 'height:100%;width:' + pct + '%;background:var(--md-primary);border-radius:4px;transition:width 0.5s' })]), h('span', { class: 'muted' }, [byStatus[k] + ' (' + pct + '%)'])])); });
       node.appendChild(attCard); }).catch(function (ex) { showError(node, ex); }); }
 
-  function viewBranding(node) { clear(node); node.appendChild(sectionHead('Branding')); loading(node);
-    API.get('/branding').then(function (b) { clear(node); node.appendChild(sectionHead('Branding'));
+  function viewBranding(node) { clear(node); node.appendChild(sectionHead('Branding & Begriffe')); loading(node);
+    API.get('/branding').then(function (b) { clear(node); node.appendChild(sectionHead('Branding & Begriffe'));
       var appName = fieldInput('App-Name', 'appName', 'text', b.appName); var color = fieldInput('Primärfarbe', 'primaryColor', 'text', b.primaryColor); var support = fieldInput('Support', 'supportContact', 'text', b.supportContact);
       var modeSel = h('select', {}, ['system', 'light', 'dark'].map(function (m) { return h('option', { value: m, selected: b.themeMode === m ? 'selected' : null }, [m]); }));
-      var save = h('button', { class: 'btn', onclick: function () { API.put('/branding', { appName: appName.input.value.trim(), primaryColor: color.input.value.trim(), supportContact: support.input.value.trim(), themeMode: modeSel.value }).then(function (nb) { applyBranding(nb); snack('Gespeichert'); renderShell(); }).catch(function (ex) { snack(ex.message, true); }); } }, [icon('save'), 'Speichern']);
-      node.appendChild(h('div', { class: 'card', style: 'max-width:480px' }, [appName.wrap, color.wrap, support.wrap, h('div', { class: 'field' }, [h('label', {}, ['Theme']), modeSel]), h('div', { class: 'row' }, [save])])); }).catch(function (ex) { showError(node, ex); }); }
+      var termArea = h('textarea', { rows: '12', style: 'width:100%;font-family:monospace;padding:8px;' }, [b.terminology || JSON.stringify(defaultTerminology, null, 2)]);
+      var termWrap = h('div', { class: 'field' }, [h('label', {}, ['Begriffe (JSON)']), h('div', { class: 'info-text', style: 'margin-bottom:8px' }, ['Passe hier Bezeichnungen wie "Trainer" oder "Mannschaft" an.']), termArea]);
+      
+      var save = h('button', { class: 'btn', onclick: function () {
+        var termStr = termArea.value.trim();
+        try { if (termStr) JSON.parse(termStr); } catch (ex) { snack('Begriffe JSON ungültig!', true); return; }
+        API.put('/branding', { appName: appName.input.value.trim(), primaryColor: color.input.value.trim(), supportContact: support.input.value.trim(), themeMode: modeSel.value, terminology: termStr }).then(function (nb) { applyBranding(nb); snack('Gespeichert'); renderShell(); }).catch(function (ex) { snack(ex.message, true); }); 
+      } }, [icon('save'), 'Speichern']);
+      node.appendChild(h('div', { class: 'card', style: 'max-width:540px' }, [appName.wrap, color.wrap, support.wrap, h('div', { class: 'field' }, [h('label', {}, ['Theme']), modeSel]), termWrap, h('div', { class: 'row' }, [save])])); }).catch(function (ex) { showError(node, ex); }); }
 
   function viewSystem(node) { clear(node); node.appendChild(sectionHead('System')); skeletonCards(node, 4);
     API.get('/system/status').then(function (s) { clear(node); node.appendChild(sectionHead('System'));
@@ -754,11 +797,11 @@
         if (s.status === 'pending') { row.appendChild(h('button', { class: 'btn tonal', onclick: function () { API.patch('/substitutions/' + s.id, { status: 'confirmed' }).then(function () { snack('Übernommen'); navigate('subs'); }); } }, [icon('check'), 'Übernehmen'])); row.appendChild(h('button', { class: 'btn outlined', onclick: function () { API.patch('/substitutions/' + s.id, { status: 'rejected' }).then(function () { snack('Abgelehnt'); navigate('subs'); }); } }, [icon('close'), 'Ablehnen'])); }
         stack.appendChild(h('div', { class: 'card' }, [h('div', { class: 'row' }, [h('h3', { style: 'flex:1;margin:0' }, [esc(s.event ? s.event.title : '—')]), h('span', { class: 'chip status-' + s.status }, [STATUS_LABELS[s.status] || s.status])]), h('div', { class: 'muted' }, [(s.event ? fmtDateFriendly(s.event.startAt) : '')]), row])); });
       node.appendChild(stack); }).catch(function (ex) { showError(node, ex); }); }
-  function subDialog() { var evSel = h('select', {}, [h('option', { value: '' }, ['Termin…'])]); var noteWrap = h('div', { class: 'field' }, [h('label', {}, ['Notiz']), h('textarea', { rows: '2' })]); var err = h('div', { class: 'error-text' }); var d;
+  function subDialog() { var evSel = h('select', {}, [h('option', { value: '' }, [t('event') + '…'])]); var noteWrap = h('div', { class: 'field' }, [h('label', {}, ['Notiz']), h('textarea', { rows: '2' })]); var err = h('div', { class: 'error-text' }); var d;
     API.get('/events?from=' + encodeURIComponent(new Date().toISOString())).then(function (events) { (events || []).forEach(function (ev) { evSel.appendChild(h('option', { value: ev.id }, [ev.title + ' · ' + fmtDateFriendly(ev.startAt)])); }); }).catch(function () {});
     var save = h('button', { class: 'btn' }, [icon('save'), 'Anfragen']);
-    save.addEventListener('click', function () { if (!evSel.value) { err.textContent = 'Termin wählen.'; return; } API.post('/substitutions', { eventId: evSel.value, note: noteWrap.querySelector('textarea').value.trim() || undefined }).then(function () { d.close(); snack('Angefragt'); navigate('subs'); }).catch(function (ex) { err.textContent = ex.message; }); });
-    d = dialog('Vertretung anfragen', [h('div', { class: 'field' }, [h('label', {}, ['Termin']), evSel]), noteWrap, err], [h('button', { class: 'btn text', onclick: function () { d.close(); } }, ['Abbrechen']), save]); }
+    save.addEventListener('click', function () { if (!evSel.value) { err.textContent = t('event') + ' wählen.'; return; } API.post('/substitutions', { eventId: evSel.value, note: noteWrap.querySelector('textarea').value.trim() || undefined }).then(function () { d.close(); snack('Angefragt'); navigate('subs'); }).catch(function (ex) { err.textContent = ex.message; }); });
+    d = dialog('Vertretung anfragen', [h('div', { class: 'field' }, [h('label', {}, [t('event')]), evSel]), noteWrap, err], [h('button', { class: 'btn text', onclick: function () { d.close(); } }, ['Abbrechen']), save]); }
 
   function viewProfiles(node) { clear(node); var actions = [h('button', { class: 'btn', onclick: function () { profileDialog(null); } }, [icon('add'), 'Profil'])]; node.appendChild(sectionHead('Rechteprofile', actions)); loading(node);
     API.get('/permission-profiles').then(function (profiles) { clear(node); node.appendChild(sectionHead('Rechteprofile', actions));

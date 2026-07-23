@@ -192,6 +192,37 @@ body {
   font-weight: 700; font-size: 18px; line-height: 1;
 }
 
+/* ---------- Fullscreen Dialog & Klassenbuch Table ---------- */
+.dialog.fullscreen {
+  width: 100vw; height: 100vh; max-width: none; max-height: none;
+  border-radius: 0; margin: 0; display: flex; flex-direction: column;
+}
+.dialog.fullscreen .dialog-content {
+  flex: 1; overflow: auto; padding: 16px;
+}
+.klassenbuch-table {
+  width: 100%; border-collapse: collapse; text-align: left;
+}
+.klassenbuch-table th, .klassenbuch-table td {
+  padding: 10px 8px; border-bottom: 1px solid var(--md-outline-variant);
+  vertical-align: middle;
+}
+.klassenbuch-table th {
+  background: var(--md-surface-container-high);
+  font-weight: 600; font-size: 13px; color: var(--md-on-surface-variant);
+}
+.klassenbuch-table td { font-size: 14px; }
+.klassenbuch-radio-group {
+  display: flex; gap: 8px; flex-wrap: wrap;
+}
+.klassenbuch-radio-label {
+  display: inline-flex; align-items: center; gap: 4px;
+  background: var(--md-surface-container); padding: 4px 8px;
+  border-radius: 6px; cursor: pointer; font-size: 13px;
+}
+.klassenbuch-radio-label:hover { background: var(--md-surface-container-high); }
+.klassenbuch-radio-label input:checked + span { font-weight: 700; color: var(--md-primary); }
+
 /* ---------- Badges / Counts ---------- */
 .badge-count {
   display: inline-flex;

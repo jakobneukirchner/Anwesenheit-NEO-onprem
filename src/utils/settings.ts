@@ -10,6 +10,7 @@ export const BRANDING_KEYS = [
   'loginBackgroundUrl',
   'supportContact',
   'legalImprintText',
+  'terminology',
 ];
 
 export const DEFAULT_BRANDING: Record<string, string> = {
@@ -21,6 +22,7 @@ export const DEFAULT_BRANDING: Record<string, string> = {
   loginBackgroundUrl: '',
   supportContact: '',
   legalImprintText: '',
+  terminology: '{}',
 };
 
 export async function getSetting(key: string): Promise<string | null> {

@@ -54,12 +54,12 @@ router.get(
       orderBy: { startAt: 'asc' },
       include: {
         attendanceRecords: {
-          select: { userId: true, status: true },
+          select: { userId: true, status: true, user: { select: { role: true } } },
         },
         group: { select: { id: true, name: true, color: true } },
       },
     })) as unknown as (EventLike & {
-      attendanceRecords: { userId: string; status: string }[];
+      attendanceRecords: { userId: string; status: string; user: { role: string } }[];
       group: { id: string; name: string; color: string | null };
     })[];
 
@@ -74,6 +74,10 @@ router.get(
       for (const r of ev.attendanceRecords) {
         counts[r.status] = (counts[r.status] || 0) + 1;
       }
+      const teacherPresent = ev.attendanceRecords.some(r => 
+        ['present', 'late_excused', 'late_unexcused'].includes(r.status) && 
+        (r.user.role.includes('teacher') || r.user.role.includes('coordinator'))
+      );
       return {
         ...s,
         groupName: ev.group.name,
@@ -82,6 +86,7 @@ router.get(
         myAttendance: myRec ? myRec.status : null,
         attendanceCounts: counts,
         totalRegistered: (counts.registered || 0) + (counts.confirmed || 0) + (counts.present || 0),
+        teacherPresent,
       };
     });
     res.json(result);
@@ -164,9 +169,22 @@ router.post(
 router.get(
   '/:id',
   asyncHandler(async (req, res) => {
-    const ev = (await prisma.event.findUnique({ where: { id: req.params.id } })) as unknown as EventLike | null;
+    const ev = (await prisma.event.findUnique({ 
+      where: { id: req.params.id },
+      include: {
+        attendanceRecords: {
+          select: { status: true, user: { select: { role: true } } }
+        }
+      }
+    })) as unknown as (EventLike & { attendanceRecords: { status: string; user: { role: string } }[] }) | null;
     if (!ev) throw new HttpError(404, 'Nicht gefunden');
-    res.json(await serializeEvent(ev));
+    
+    const serialized = await serializeEvent(ev);
+    const teacherPresent = ev.attendanceRecords.some(r => 
+      ['present', 'late_excused', 'late_unexcused'].includes(r.status) && 
+      (r.user.role.includes('teacher') || r.user.role.includes('coordinator'))
+    );
+    res.json({ ...serialized, teacherPresent });
   }),
 );
 

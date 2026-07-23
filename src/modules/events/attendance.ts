@@ -124,7 +124,9 @@ router.post(
           if (event.withdrawDeadline && now > event.withdrawDeadline) {
             throw new HttpError(400, 'Abmeldefrist abgelaufen');
           }
-          newStatus = 'absent';
+          newStatus = 'absent_excused';
+        } else if (action === 'late') {
+          newStatus = 'late_excused';
         } else {
           throw new HttpError(400, `Aktion "${action}" nicht erlaubt im Modus Anmeldebasiert`);
         }
@@ -142,12 +144,14 @@ router.post(
             const allowed = await resolvePermission(actorId, 'childCanSelfWithdraw');
             if (!allowed) throw new HttpError(403, 'Selbstabmeldung nicht erlaubt');
           }
-          newStatus = 'absent';
+          newStatus = 'absent_excused';
         } else if (action === 'register') {
           if (event.signupDeadline && now > event.signupDeadline) {
             throw new HttpError(400, 'Anmeldefrist abgelaufen');
           }
           newStatus = 'registered';
+        } else if (action === 'late') {
+          newStatus = 'late_excused';
         } else {
           throw new HttpError(400, `Aktion "${action}" nicht erlaubt im Modus Abmeldebasiert`);
         }
@@ -167,6 +171,8 @@ router.post(
             throw new HttpError(400, 'Abmeldefrist abgelaufen');
           }
           newStatus = 'cancelled';
+        } else if (action === 'late') {
+          newStatus = 'late_excused';
         } else {
           throw new HttpError(400, `Aktion "${action}" nicht erlaubt im Modus Bestätigung`);
         }
@@ -216,7 +222,11 @@ router.post(
     const { userId, status } = req.body as { userId?: string; status?: string };
     if (!userId || !status) throw new HttpError(400, 'userId und status erforderlich');
 
-    const validStatuses = ['registered', 'absent', 'pending', 'confirmed', 'cancelled', 'present'];
+    const validStatuses = [
+      'registered', 'absent', 'absent_excused', 'absent_unexcused', 
+      'pending', 'confirmed', 'cancelled', 'present', 
+      'late_excused', 'late_unexcused'
+    ];
     if (!validStatuses.includes(status)) {
       throw new HttpError(400, `Ungültiger Status: ${status}. Erlaubt: ${validStatuses.join(', ')}`);
     }
@@ -298,6 +308,54 @@ router.delete(
       data: { status: newStatus },
     });
     res.json({ id: record.id, status: record.status });
+  }),
+);
+
+// GET /events/:id/attendance/export
+router.get(
+  '/:id/attendance/export',
+  asyncHandler(async (req, res) => {
+    const actorRoles = req.user!.roles;
+    const ev = await prisma.event.findUnique({ where: { id: req.params.id } });
+    if (!ev) throw new HttpError(404, 'Termin nicht gefunden');
+
+    let isManager = false;
+    if (ev.groupId) {
+      const ms = await prisma.groupMembership.findUnique({
+        where: { userId_groupId: { userId: req.user!.id, groupId: ev.groupId } },
+      });
+      if (ms && actorRoles.some(r => ['teacher', 'coordinator'].includes(r))) isManager = true;
+    }
+    if (!isManager && !actorRoles.some(r => ['admin', 'suad', 'coordinator'].includes(r))) {
+      throw new HttpError(403, 'Keine Berechtigung zum Export');
+    }
+
+    const records = await prisma.attendanceRecord.findMany({
+      where: { eventId: req.params.id },
+    });
+    const userIds = records.map(r => r.userId);
+    const users = await prisma.user.findMany({
+      where: { id: { in: userIds } },
+      select: { id: true, name: true, role: true },
+    });
+    const userMap = new Map(users.map(u => [u.id, u]));
+
+    // Generiere CSV
+    let csv = '\uFEFF'; // BOM for Excel
+    csv += 'Name;Rollen;Status;Datum\n';
+    
+    for (const r of records) {
+      const u = userMap.get(r.userId);
+      if (!u) continue;
+      const rolesStr = u.role.startsWith('[') ? JSON.parse(u.role).join(', ') : u.role;
+      const name = `"${u.name.replace(/"/g, '""')}"`;
+      const date = `"${r.createdAt.toISOString()}"`;
+      csv += `${name};"${rolesStr}";"${r.status}";${date}\n`;
+    }
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="Teilnehmer_${req.params.id}.csv"`);
+    res.send(csv);
   }),
 );
 
