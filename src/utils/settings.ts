@@ -11,6 +11,7 @@ export const BRANDING_KEYS = [
   'supportContact',
   'legalImprintText',
   'terminology',
+  'eventLookaheadDays',
 ];
 
 export const DEFAULT_BRANDING: Record<string, string> = {
@@ -23,6 +24,7 @@ export const DEFAULT_BRANDING: Record<string, string> = {
   supportContact: '',
   legalImprintText: '',
   terminology: '{}',
+  eventLookaheadDays: '365',
 };
 
 export async function getSetting(key: string): Promise<string | null> {

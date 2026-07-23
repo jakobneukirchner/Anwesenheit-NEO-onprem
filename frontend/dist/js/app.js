@@ -334,6 +334,7 @@
   function modeActionButtons(ev) {
     var wrap = h('div', { class: 'row', style: 'margin-top:8px' });
     if (ev.isCancelled) { wrap.appendChild(h('span', { class: 'chip status-cancelled' }, [icon('block'), 'Ausgefallen'])); return wrap; }
+    if (ev.myAttendanceLocked) { wrap.appendChild(h('span', { class: 'chip', style: 'color:var(--md-on-surface-variant);background:var(--md-surface-container)' }, [icon('lock'), 'Status vom Trainer festgelegt'])); return wrap; }
     var myStatus = ev.myAttendance;
 
     function doAction(action, label) {
@@ -394,7 +395,7 @@
     API.get('/groups').then(function (groups) { (groups || []).forEach(function (g) { groupFilter.appendChild(h('option', { value: g.id }, [g.name])); }); }).catch(function () {});
     var typeFilter = h('select', {}, [h('option', { value: '' }, ['Alle Typen'])]);
     (state.eventTypes || []).forEach(function(t) { if (t.isActive) typeFilter.appendChild(h('option', { value: t.name }, [t.name])); });
-    var dateFilter = h('select', {}, [h('option', { value: 'upcoming' }, ['Anstehend']), h('option', { value: 'today' }, ['Heute']), h('option', { value: 'week' }, ['Diese Woche']), h('option', { value: 'all' }, ['Alle'])]);
+    var dateFilter = h('select', {}, [h('option', { value: 'upcoming' }, ['Anstehend']), h('option', { value: 'today' }, ['Heute']), h('option', { value: 'week' }, ['Diese Woche']), h('option', { value: 'past' }, ['Vergangene']), h('option', { value: 'all' }, ['Alle'])]);
     node.appendChild(h('div', { class: 'filter-bar' }, [icon('filter_list'), groupFilter, typeFilter, dateFilter]));
 
     var listContainer = h('div');
@@ -405,6 +406,7 @@
       if (dateVal === 'upcoming') params += 'from=' + encodeURIComponent(now.toISOString());
       else if (dateVal === 'today') { var ts = new Date(now.getFullYear(), now.getMonth(), now.getDate()); params += 'from=' + encodeURIComponent(ts.toISOString()) + '&to=' + encodeURIComponent(new Date(ts.getTime() + 86400000).toISOString()); }
       else if (dateVal === 'week') params += 'from=' + encodeURIComponent(now.toISOString()) + '&to=' + encodeURIComponent(new Date(now.getTime() + 7 * 86400000).toISOString());
+      else if (dateVal === 'past') params += 'past=true';
       if (groupFilter.value) params += (params ? '&' : '') + 'groupId=' + groupFilter.value;
       if (typeFilter.value) params += (params ? '&' : '') + 'eventType=' + typeFilter.value;
       skeletonList(listContainer, 4);
@@ -507,35 +509,55 @@
         // Klassenbuch Tabelle
         var tableWrap = h('div', { style: 'overflow-x:auto; background:var(--md-surface); border-radius:12px; border:1px solid var(--md-outline-variant)' });
         var table = h('table', { class: 'klassenbuch-table' });
-        var thead = h('thead', {}, [h('tr', {}, [h('th', {}, ['Teilnehmer']), h('th', {}, ['Status']), h('th', {}, ['Notiz'])])]);
+        var thead = h('thead', {}, [h('tr', {}, [h('th', {}, [t('member') + ' (' + members.length + ')']), h('th', {style: 'text-align:center'}, ['Abwesend']), h('th', {style: 'text-align:center'}, ['Verspätet']), h('th', {}, ['Notiz'])])]);
         var tbody = h('tbody');
         members.sort(function (a, b) { return a.userName.localeCompare(b.userName); });
         members.forEach(function (m) {
-          var row = h('tr');
+          var isAbsent = m.status.indexOf('absent') === 0;
+          var isLate = m.status.indexOf('late') === 0;
+          var isPresent = m.status === 'present';
+          
+          var rowClass = isAbsent ? 'row-absent' : (isLate ? 'row-late' : (isPresent ? 'row-present' : ''));
+          var row = h('tr', { class: rowClass });
           row.appendChild(h('td', { style: 'font-weight:500;white-space:nowrap;' }, [h('div', {class: 'row'}, [icon('person'), esc(m.userName)])]));
           
-          var statusCell = h('td');
-          var radioGroup = h('div', { class: 'klassenbuch-radio-group' });
-          ['present', 'absent_excused', 'absent_unexcused', 'late_excused', 'late_unexcused', 'registered', 'confirmed', 'absent', 'cancelled', 'pending'].forEach(function (s) {
-            // Show only relevant statuses or the currently selected one
-            var primaryStatuses = ['present', 'absent_excused', 'absent_unexcused', 'late_excused', 'late_unexcused', 'registered', 'absent'];
-            if (primaryStatuses.indexOf(s) === -1 && m.status !== s) return;
-            
-            var lbl = h('label', { class: 'klassenbuch-radio-label' });
-            var radio = h('input', { type: 'radio', name: 'status_' + m.userId, value: s, style: 'display:none' });
-            if (m.status === s) radio.checked = true;
-            radio.addEventListener('change', function () {
-              API.post('/events/' + ev.id + '/attendance/set-status', { userId: m.userId, status: s })
-                .then(function () { snack('Status aktualisiert'); load(); }).catch(function (ex) { snack(ex.message, true); });
-            });
-            lbl.appendChild(radio);
-            lbl.appendChild(h('span', {}, [STATUS_LABELS[s] || s]));
-            radioGroup.appendChild(lbl);
-          });
-          statusCell.appendChild(radioGroup);
-          row.appendChild(statusCell);
+          function save(s, mins) {
+            var body = { userId: m.userId, status: s };
+            if (mins) body.minutesLate = parseInt(mins, 10);
+            API.post('/events/' + ev.id + '/attendance/set-status', body)
+               .then(function () { snack('Gespeichert'); load(); }).catch(function (ex) { snack(ex.message, true); load(); });
+          }
+
+          var cbAbsent = h('input', { type: 'checkbox' });
+          if (isAbsent) cbAbsent.checked = true;
+          var tdAbsent = h('td', { style: 'text-align:center' }, [cbAbsent]);
+          row.appendChild(tdAbsent);
           
-          row.appendChild(h('td', { class: 'muted', style: 'font-size:12px;font-style:italic;' }, [m.note ? esc(m.note) : '']));
+          var cbLate = h('input', { type: 'checkbox' });
+          if (isLate) cbLate.checked = true;
+          var minInput = h('input', { type: 'number', min: '1', style: 'width:60px;margin-left:8px;display:' + (isLate ? 'inline-block' : 'none'), value: m.minutesLate || '15' });
+          var minSpan = h('span', { style: 'margin-left:4px;display:' + (isLate ? 'inline-block' : 'none') }, ['Minuten']);
+          var tdLate = h('td', { style: 'text-align:center;white-space:nowrap;' }, [cbLate, minInput, minSpan]);
+          row.appendChild(tdLate);
+          
+          cbAbsent.addEventListener('change', function () {
+            if (cbAbsent.checked) { cbLate.checked = false; save('absent_unexcused'); }
+            else { save('registered'); }
+          });
+          cbLate.addEventListener('change', function () {
+            if (cbLate.checked) { cbAbsent.checked = false; save('late_unexcused', minInput.value || '15'); }
+            else { save('registered'); }
+          });
+          minInput.addEventListener('change', function () {
+            if (cbLate.checked) save('late_unexcused', minInput.value);
+          });
+          
+          var noteInput = h('input', { type: 'text', placeholder: 'Krankgemeldet...', value: m.note || '', style: 'width:100%;border:none;background:transparent;outline:none;' });
+          noteInput.addEventListener('change', function() {
+            API.post('/events/' + ev.id + '/attendance/set-status', { userId: m.userId, status: m.status, note: noteInput.value })
+               .then(function () { snack('Notiz gespeichert'); load(); }).catch(function (ex) { snack(ex.message, true); load(); });
+          });
+          row.appendChild(h('td', {}, [noteInput]));
           tbody.appendChild(row);
         });
         table.appendChild(thead);
@@ -756,6 +778,7 @@
   function viewBranding(node) { clear(node); node.appendChild(sectionHead('Branding & Begriffe')); loading(node);
     API.get('/branding').then(function (b) { clear(node); node.appendChild(sectionHead('Branding & Begriffe'));
       var appName = fieldInput('App-Name', 'appName', 'text', b.appName); var color = fieldInput('Primärfarbe', 'primaryColor', 'text', b.primaryColor); var support = fieldInput('Support', 'supportContact', 'text', b.supportContact);
+      var lookahead = fieldInput('Vorausschau ' + t('events') + ' (Tage)', 'eventLookaheadDays', 'number', b.eventLookaheadDays || '365');
       var modeSel = h('select', {}, ['system', 'light', 'dark'].map(function (m) { return h('option', { value: m, selected: b.themeMode === m ? 'selected' : null }, [m]); }));
       var termArea = h('textarea', { rows: '12', style: 'width:100%;font-family:monospace;padding:8px;' }, [b.terminology || JSON.stringify(defaultTerminology, null, 2)]);
       var termWrap = h('div', { class: 'field' }, [h('label', {}, ['Begriffe (JSON)']), h('div', { class: 'info-text', style: 'margin-bottom:8px' }, ['Passe hier Bezeichnungen wie "Trainer" oder "Mannschaft" an.']), termArea]);
@@ -763,9 +786,9 @@
       var save = h('button', { class: 'btn', onclick: function () {
         var termStr = termArea.value.trim();
         try { if (termStr) JSON.parse(termStr); } catch (ex) { snack('Begriffe JSON ungültig!', true); return; }
-        API.put('/branding', { appName: appName.input.value.trim(), primaryColor: color.input.value.trim(), supportContact: support.input.value.trim(), themeMode: modeSel.value, terminology: termStr }).then(function (nb) { applyBranding(nb); snack('Gespeichert'); renderShell(); }).catch(function (ex) { snack(ex.message, true); }); 
+        API.put('/branding', { appName: appName.input.value.trim(), primaryColor: color.input.value.trim(), supportContact: support.input.value.trim(), themeMode: modeSel.value, terminology: termStr, eventLookaheadDays: lookahead.input.value.trim() || '365' }).then(function (nb) { applyBranding(nb); snack('Gespeichert'); renderShell(); }).catch(function (ex) { snack(ex.message, true); }); 
       } }, [icon('save'), 'Speichern']);
-      node.appendChild(h('div', { class: 'card', style: 'max-width:540px' }, [appName.wrap, color.wrap, support.wrap, h('div', { class: 'field' }, [h('label', {}, ['Theme']), modeSel]), termWrap, h('div', { class: 'row' }, [save])])); 
+      node.appendChild(h('div', { class: 'card', style: 'max-width:540px' }, [appName.wrap, color.wrap, support.wrap, lookahead.wrap, h('div', { class: 'field' }, [h('label', {}, ['Theme']), modeSel]), termWrap, h('div', { class: 'row' }, [save])])); 
       
       var isAdmin = state.me && (state.me.roles || [state.me.role]).indexOf('admin') >= 0;
       if (isAdmin) {

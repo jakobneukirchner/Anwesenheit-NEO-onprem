@@ -58,6 +58,8 @@ router.get(
         recordId: rec?.id ?? null,
         registeredBy: rec?.registeredBy ?? null,
         noteEnc: rec?.noteEnc ?? null,
+        lockedByTeacher: rec?.lockedByTeacher ?? false,
+        minutesLate: rec?.minutesLate ?? null,
         updatedAt: rec?.updatedAt ?? null,
       };
     });
@@ -109,6 +111,10 @@ router.post(
       where: { eventId_userId: { eventId: event.id, userId: targetUserId } },
     });
     const currentStatus = existing?.status ?? null;
+
+    if (existing?.lockedByTeacher) {
+      throw new HttpError(403, 'Dieser Status wurde von einem Trainer festgelegt und kann nicht mehr geändert werden.');
+    }
 
     let newStatus: string;
 
@@ -219,7 +225,7 @@ router.post(
       throw new HttpError(403, 'Nur Trainer oder Admins können Anwesenheiten setzen');
     }
 
-    const { userId, status } = req.body as { userId?: string; status?: string };
+    const { userId, status, minutesLate } = req.body as { userId?: string; status?: string; minutesLate?: number };
     if (!userId || !status) throw new HttpError(400, 'userId und status erforderlich');
 
     const validStatuses = [
@@ -233,14 +239,16 @@ router.post(
 
     const event = await prisma.event.findUnique({ where: { id: req.params.id } });
     if (!event) throw new HttpError(404, 'Termin nicht gefunden');
+    
+    const isLocked = !['registered', 'pending', 'confirmed'].includes(status);
 
     const noteEnc = await packField(req.body.note);
     const record = await prisma.attendanceRecord.upsert({
       where: { eventId_userId: { eventId: event.id, userId } },
-      update: { status, noteEnc: noteEnc ?? undefined, registeredBy: actorId },
-      create: { eventId: event.id, userId, status, noteEnc, registeredBy: actorId },
+      update: { status, noteEnc: noteEnc ?? undefined, registeredBy: actorId, lockedByTeacher: isLocked, minutesLate },
+      create: { eventId: event.id, userId, status, noteEnc, registeredBy: actorId, lockedByTeacher: isLocked, minutesLate },
     });
-    res.json({ id: record.id, status: record.status });
+    res.json({ id: record.id, status: record.status, lockedByTeacher: record.lockedByTeacher, minutesLate: record.minutesLate });
   }),
 );
 
@@ -276,7 +284,7 @@ router.post(
     if (presentUserIds.length > 0) {
       await prisma.attendanceRecord.updateMany({
         where: { eventId: event.id, userId: { in: presentUserIds } },
-        data: { status: 'present', registeredBy: actorId },
+        data: { status: 'present', registeredBy: actorId, lockedByTeacher: true },
       });
     }
 
@@ -287,7 +295,7 @@ router.post(
         userId: { notIn: presentUserIds },
         status: { in: ['registered', 'confirmed', 'present'] },
       },
-      data: { status: 'absent' },
+      data: { status: 'absent_unexcused', lockedByTeacher: true },
     });
 
     res.json({ ok: true, checkedIn: presentUserIds.length });
@@ -302,7 +310,14 @@ router.delete(
     const event = await prisma.event.findUnique({ where: { id: req.params.id } });
     if (!event) throw new HttpError(404, 'Termin nicht gefunden');
 
-    const newStatus = event.mode === 'confirmation' ? 'cancelled' : 'absent';
+    const existing = await prisma.attendanceRecord.findUnique({
+      where: { eventId_userId: { eventId: req.params.id, userId: req.params.userId } }
+    });
+    if (existing?.lockedByTeacher) {
+      throw new HttpError(403, 'Dieser Status wurde von einem Trainer festgelegt und kann nicht mehr geändert werden.');
+    }
+
+    const newStatus = event.mode === 'confirmation' ? 'cancelled' : 'absent_excused';
     const record = await prisma.attendanceRecord.update({
       where: { eventId_userId: { eventId: req.params.id, userId: req.params.userId } },
       data: { status: newStatus },

@@ -39,7 +39,7 @@ async function createAttendanceForGroup(eventId: string, groupId: string, mode: 
 router.get(
   '/',
   asyncHandler(async (req, res) => {
-    const { groupId, from, to, mode, eventType } = req.query as Record<string, string | undefined>;
+    const { groupId, from, to, mode, eventType, past } = req.query as Record<string, string | undefined>;
     const where: Record<string, unknown> = {};
     if (groupId) where.groupId = groupId;
     if (mode) where.mode = mode;
@@ -48,18 +48,28 @@ router.get(
       where.startAt = {};
       if (from) (where.startAt as Record<string, Date>).gte = new Date(from);
       if (to) (where.startAt as Record<string, Date>).lte = new Date(to);
+    } else {
+      const now = new Date();
+      if (past === 'true') {
+        where.startAt = { lt: now };
+      } else {
+        const lookaheadStr = await prisma.globalSetting.findUnique({ where: { key: 'eventLookaheadDays' } });
+        const lookaheadDays = parseInt(lookaheadStr?.value ?? '365', 10);
+        const futureLimit = new Date(now.getTime() + lookaheadDays * 24 * 60 * 60 * 1000);
+        where.startAt = { gte: now, lte: futureLimit };
+      }
     }
     const events = (await prisma.event.findMany({
       where,
-      orderBy: { startAt: 'asc' },
+      orderBy: { startAt: (past === 'true' && !from && !to) ? 'desc' : 'asc' },
       include: {
         attendanceRecords: {
-          select: { userId: true, status: true, user: { select: { role: true } } },
+          select: { userId: true, status: true, lockedByTeacher: true, user: { select: { role: true } } },
         },
         group: { select: { id: true, name: true, color: true } },
       },
     })) as unknown as (EventLike & {
-      attendanceRecords: { userId: string; status: string; user: { role: string } }[];
+      attendanceRecords: { userId: string; status: string; lockedByTeacher: boolean; user: { role: string } }[];
       group: { id: string; name: string; color: string | null };
     })[];
 
@@ -84,6 +94,7 @@ router.get(
         groupColor: ev.group.color,
         totalMembers: ev.attendanceRecords.length,
         myAttendance: myRec ? myRec.status : null,
+        myAttendanceLocked: myRec ? myRec.lockedByTeacher : false,
         attendanceCounts: counts,
         totalRegistered: (counts.registered || 0) + (counts.confirmed || 0) + (counts.present || 0),
         teacherPresent,

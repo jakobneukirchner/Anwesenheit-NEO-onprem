@@ -171,13 +171,15 @@ model EventType {
 // ============================================================
 
 model AttendanceRecord {
-  id           String   @id @default(uuid())
-  eventId      String
-  userId       String
-  status       String // registered | absent | pending | confirmed | cancelled | present
-  registeredBy String? // userId des Elternteils, falls Elternteil einträgt
-  noteEnc      String? // AES-256-GCM (JSON: ciphertext/iv/tag/keyVersion)
-  createdAt    DateTime @default(now())
+  id              String   @id @default(uuid())
+  eventId         String
+  userId          String
+  status          String // registered | absent | pending | confirmed | cancelled | present
+  registeredBy    String? // userId des Elternteils, falls Elternteil einträgt
+  noteEnc         String? // AES-256-GCM (JSON: ciphertext/iv/tag/keyVersion)
+  lockedByTeacher Boolean  @default(false)
+  minutesLate     Int?
+  createdAt       DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
   event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
